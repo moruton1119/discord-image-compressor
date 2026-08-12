@@ -1,0 +1,273 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Discord 画像圧縮くん - 10MB以下にするやつ</title>
+  <style>
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
+
+    body {
+      font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
+      background: #1a1a2e;
+      color: #e0e0e0;
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      padding: 20px;
+    }
+
+    header {
+      text-align: center;
+      margin-bottom: 30px;
+    }
+
+    header h1 {
+      font-size: 1.8rem;
+      background: linear-gradient(135deg, #5865F2, #7289DA);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+      background-clip: text;
+      margin-bottom: 8px;
+    }
+
+    header p {
+      color: #888;
+      font-size: 0.9rem;
+    }
+
+    .upload-area {
+      width: 100%;
+      max-width: 600px;
+      min-height: 250px;
+      border: 3px dashed #5865F2;
+      border-radius: 16px;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      cursor: pointer;
+      transition: all 0.3s ease;
+      background: rgba(88, 101, 242, 0.05);
+      margin-bottom: 20px;
+    }
+
+    .upload-area:hover,
+    .upload-area.dragover {
+      border-color: #7289DA;
+      background: rgba(88, 101, 242, 0.15);
+      transform: scale(1.01);
+    }
+
+    .upload-area .icon {
+      font-size: 3rem;
+      margin-bottom: 12px;
+    }
+
+    .upload-area .text {
+      font-size: 1.1rem;
+      color: #aaa;
+    }
+
+    .upload-area .subtext {
+      font-size: 0.8rem;
+      color: #666;
+      margin-top: 6px;
+    }
+
+    #fileInput {
+      display: none;
+    }
+
+    .results {
+      width: 100%;
+      max-width: 600px;
+      display: flex;
+      flex-direction: column;
+      gap: 16px;
+    }
+
+    .result-card {
+      background: #16213e;
+      border-radius: 12px;
+      padding: 20px;
+      display: flex;
+      gap: 16px;
+      align-items: center;
+      animation: slideIn 0.3s ease;
+    }
+
+    @keyframes slideIn {
+      from { opacity: 0; transform: translateY(20px); }
+      to { opacity: 1; transform: translateY(0); }
+    }
+
+    .result-card .preview {
+      width: 100px;
+      height: 100px;
+      border-radius: 8px;
+      object-fit: cover;
+      flex-shrink: 0;
+      background: #0a0a1a;
+    }
+
+    .result-card .info {
+      flex: 1;
+      min-width: 0;
+    }
+
+    .result-card .filename {
+      font-weight: 600;
+      font-size: 0.95rem;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      margin-bottom: 8px;
+    }
+
+    .result-card .stats {
+      display: flex;
+      gap: 12px;
+      flex-wrap: wrap;
+      font-size: 0.85rem;
+    }
+
+    .result-card .stat {
+      background: rgba(88, 101, 242, 0.15);
+      padding: 4px 10px;
+      border-radius: 6px;
+    }
+
+    .result-card .stat.before { color: #f04747; }
+    .result-card .stat.after { color: #43b581; }
+    .result-card .stat.ratio { color: #faa61a; }
+
+    .result-card .download-btn {
+      background: #43b581;
+      color: #fff;
+      border: none;
+      padding: 10px 20px;
+      border-radius: 8px;
+      cursor: pointer;
+      font-size: 0.9rem;
+      font-weight: 600;
+      transition: background 0.2s;
+      flex-shrink: 0;
+    }
+
+    .result-card .download-btn:hover {
+      background: #3ca374;
+    }
+
+    .progress-bar {
+      width: 100%;
+      max-width: 600px;
+      height: 6px;
+      background: #16213e;
+      border-radius: 3px;
+      overflow: hidden;
+      margin-bottom: 20px;
+      display: none;
+    }
+
+    .progress-bar.active {
+      display: block;
+    }
+
+    .progress-bar .fill {
+      height: 100%;
+      background: linear-gradient(90deg, #5865F2, #43b581);
+      width: 0%;
+      transition: width 0.3s ease;
+    }
+
+    .settings {
+      width: 100%;
+      max-width: 600px;
+      background: #16213e;
+      border-radius: 12px;
+      padding: 16px 20px;
+      margin-bottom: 20px;
+      display: flex;
+      align-items: center;
+      gap: 16px;
+      flex-wrap: wrap;
+    }
+
+    .settings label {
+      font-size: 0.9rem;
+      color: #aaa;
+    }
+
+    .settings select {
+      background: #1a1a2e;
+      color: #e0e0e0;
+      border: 1px solid #333;
+      border-radius: 6px;
+      padding: 6px 12px;
+      font-size: 0.9rem;
+      cursor: pointer;
+    }
+
+    .settings .target-size {
+      font-weight: 600;
+      color: #5865F2;
+    }
+
+    .footer-note {
+      margin-top: 30px;
+      font-size: 0.8rem;
+      color: #555;
+      text-align: center;
+      max-width: 600px;
+    }
+
+    .footer-note a {
+      color: #5865F2;
+      text-decoration: none;
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>🖼️ Discord 画像圧縮くん</h1>
+    <p>10MB以下にサクッと圧縮！完全ローカル処理でファイル送信なし</p>
+  </header>
+
+  <div class="settings">
+    <label>🎯 目標サイズ:</label>
+    <span class="target-size">10 MB</span>
+    <label>📦 出力フォーマット:</label>
+    <select id="formatSelect">
+      <option value="webp">WebP（推奨・最小サイズ）</option>
+      <option value="jpeg">JPEG（互換性重視）</option>
+      <option value="png">PNG（透明情報保持・非圧縮）</option>
+    </select>
+  </div>
+
+  <div class="upload-area" id="uploadArea">
+    <div class="icon">📎</div>
+    <div class="text">ここに画像をドロップ または クリックして選択</div>
+    <div class="subtext">対応形式: JPEG, PNG, WebP, GIF, BMP</div>
+  </div>
+  <input type="file" id="fileInput" accept="image/*" multiple>
+
+  <div class="progress-bar" id="progressBar">
+    <div class="fill" id="progressFill"></div>
+  </div>
+
+  <div class="results" id="results"></div>
+
+  <div class="footer-note">
+    🔒 全処理はブラウザ内で完結します。サーバーへの送信は一切ありません。<br>
+    Discord無料プランの添付ファイル上限（10MB）に最適化。
+  </div>
+
+  <script src="compressor.js"></script>
+</body>
+</html>
