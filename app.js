@@ -40,7 +40,9 @@ let compressor = null;
 async function ensureWasm() {
   if (!wasmReady) {
     const wasmModule = await import('./image_compressor.js');
-    await wasmModule.init('./image_compressor_bg.wasm');
+    // wasm-pack --target web の場合、init は default export
+    const init = wasmModule.default;
+    await init('./image_compressor_bg.wasm');
     compressor = new wasmModule.ImageCompressor();
     wasmReady = true;
     console.log('🦀 Rust/WASM エンジン初期化完了!');
