@@ -14,6 +14,52 @@
 import { FFmpeg } from 'https://unpkg.com/@ffmpeg/ffmpeg@0.12.15/dist/esm/index.js';
 import { fetchFile, toBlobURL } from 'https://unpkg.com/@ffmpeg/util@0.12.2/dist/esm/index.js';
 
+// ============ デバッグログ収集 ============
+// スマホからコンソールが見えなくてもエラー原因を画面で確認できるように
+const debugLogs = [];
+
+function addDebugLog(level, message) {
+  const time = new Date().toLocaleTimeString();
+  const entry = `[${time}] [${level}] ${message}`;
+  debugLogs.push(entry);
+  console.log(entry);
+  // 画面上のデバッグパネルにも追記
+  const panel = document.getElementById('debugPanel');
+  if (panel) {
+    const line = document.createElement('div');
+    line.className = `debug-line debug-${level.toLowerCase()}`;
+    line.textContent = entry;
+    panel.appendChild(line);
+    panel.scrollTop = panel.scrollHeight;
+  }
+}
+
+// ブラウザ環境情報をログに残す
+export function logBrowserInfo() {
+  addDebugLog('INFO', `UA: ${navigator.userAgent}`);
+  addDebugLog('INFO', `Platform: ${navigator.platform}`);
+  addDebugLog('INFO', `SharedArrayBuffer: ${typeof SharedArrayBuffer !== 'undefined' ? '✅ 利用可能' : '❌ 利用不可'}`);
+  addDebugLog('INFO', `crossOriginIsolated: ${self.crossOriginIsolated}`);
+  addDebugLog('INFO', `WebAssembly: ${typeof WebAssembly !== 'undefined' ? '✅' : '❌'}`);
+  addDebugLog('INFO', `Device Memory: ${navigator.deviceMemory || 'unknown'} GB`);
+  addDebugLog('INFO', `Hardware Concurrency: ${navigator.hardwareConcurrency || 'unknown'} cores`);
+}
+
+// グローバルエラーハンドラー
+window.addEventListener('error', (e) => {
+  addDebugLog('ERROR', `グローバルエラー: ${e.message} @ ${e.filename}:${e.lineno}`);
+});
+window.addEventListener('unhandledrejection', (e) => {
+  addDebugLog('ERROR', `Unhandled Promise: ${e.reason}`);
+});
+
+// console.error をフック
+const _consoleError = console.error;
+console.error = (...args) => {
+  addDebugLog('ERROR', args.map(a => typeof a === 'object' ? JSON.stringify(a, null, 2) : String(a)).join(' '));
+  _consoleError.apply(console, args);
+};
+
 const TARGET_SIZE_MB = 10;
 const TARGET_SIZE_BYTES = TARGET_SIZE_MB * 1024 * 1024;
 
@@ -40,14 +86,22 @@ async function ensureFFmpeg(onProgress) {
   }
 
   ffmpeg.on('log', ({ message }) => {
-    console.log('[ffmpeg]', message);
+    addDebugLog('FFMPEG', message);
   });
 
   // CDNからコアを読み込む
-  await ffmpeg.load({
-    coreURL: await toBlobURL(`${FFMPEG_CORE_URL}/ffmpeg-core.js`, 'text/javascript'),
-    wasmURL: await toBlobURL(`${FFMPEG_CORE_URL}/ffmpeg-core.wasm`, 'application/wasm'),
-  });
+  addDebugLog('LOAD', 'ffmpeg core をCDNから読み込み中...');
+  try {
+    const coreURL = await toBlobURL(`${FFMPEG_CORE_URL}/ffmpeg-core.js`, 'text/javascript');
+    addDebugLog('LOAD', 'ffmpeg-core.js 取得OK');
+    const wasmURL = await toBlobURL(`${FFMPEG_CORE_URL}/ffmpeg-core.wasm`, 'application/wasm');
+    addDebugLog('LOAD', `ffmpeg-core.wasm 取得OK`);
+    await ffmpeg.load({ coreURL, wasmURL });
+    addDebugLog('LOAD', 'ffmpeg.load() 完了!');
+  } catch (loadErr) {
+    addDebugLog('ERROR', `ffmpeg.load() 失敗: ${loadErr.message || loadErr}`);
+    throw loadErr;
+  }
 
   ffmpegReady = true;
   return ffmpeg;
@@ -63,12 +117,15 @@ async function ensureFFmpeg(onProgress) {
  * @returns {Promise<{blob: Blob, originalSize: number, compressedSize: number}>}
  */
 export async function compressVideo(file, onProgress, onStatus) {
-  console.log(`🎬 動画圧縮開始: ${file.name} (${(file.size / 1024 / 1024).toFixed(2)} MB)`);
+  addDebugLog('INFO', `動画圧縮開始: ${file.name}`);
+  addDebugLog('INFO', `ファイルサイズ: ${(file.size / 1024 / 1024).toFixed(2)} MB (${file.size} bytes)`);
+  addDebugLog('INFO', `MIME Type: ${file.type}`);
 
   onStatus?.('ffmpeg.wasm を読み込み中...');
   const ff = await ensureFFmpeg(onProgress);
 
   const inputName = 'input_video';
+  addDebugLog('STEP', '動画データをffmpeg仮想FSに書き込み中...');
   const outputName = 'output.mp4';
 
   // 入力ファイルをffmpegの仮想FSに書き込む
@@ -79,7 +136,7 @@ export async function compressVideo(file, onProgress, onStatus) {
   // 動画の長さを取得（ffprobe相当）
   onStatus?.('動画情報を解析中...');
   const duration = await getVideoDuration(ff, inputName);
-  console.log(`📏 動画の長さ: ${duration.toFixed(1)}秒`);
+  addDebugLog('INFO', `動画の長さ: ${duration.toFixed(1)}秒`);
 
   // 目標ビットレートを計算
   // bitrate(kbps) = targetSize(KB) × 8 / duration(s)

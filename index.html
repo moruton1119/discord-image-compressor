@@ -354,6 +354,83 @@
       flex-shrink: 0;
       background: #0a0a1a;
     }
+
+    /* ===== デバッグパネル ===== */
+    .debug-container {
+      width: 100%;
+      max-width: 600px;
+      margin-top: 20px;
+      display: none;
+    }
+
+    .debug-container.active {
+      display: block;
+    }
+
+    .debug-toggle {
+      width: 100%;
+      padding: 10px;
+      background: #0d1117;
+      border: 1px solid #333;
+      border-radius: 8px;
+      color: #888;
+      font-size: 0.85rem;
+      cursor: pointer;
+      text-align: center;
+      margin-bottom: 8px;
+    }
+
+    .debug-toggle:hover {
+      color: #e0e0e0;
+      border-color: #555;
+    }
+
+    .debug-panel {
+      background: #0d1117;
+      border: 1px solid #333;
+      border-radius: 8px;
+      padding: 12px;
+      max-height: 300px;
+      overflow-y: auto;
+      font-family: 'Courier New', monospace;
+      font-size: 0.75rem;
+      line-height: 1.6;
+      display: none;
+    }
+
+    .debug-panel.active {
+      display: block;
+    }
+
+    .debug-line {
+      white-space: pre-wrap;
+      word-break: break-all;
+      margin-bottom: 2px;
+    }
+
+    .debug-info { color: #8b949e; }
+    .debug-load { color: #58a6ff; }
+    .debug-step { color: #d2a8ff; }
+    .debug-ffmpeg { color: #7ee787; }
+    .debug-error { color: #ff7b72; font-weight: bold; }
+    .debug-warn { color: #f0883e; }
+
+    .debug-copy-btn {
+      width: 100%;
+      padding: 8px;
+      background: #21262d;
+      border: 1px solid #333;
+      border-radius: 6px;
+      color: #c9d1d9;
+      font-size: 0.8rem;
+      cursor: pointer;
+      margin-top: 8px;
+      text-align: center;
+    }
+
+    .debug-copy-btn:hover {
+      background: #30363d;
+    }
   </style>
 </head>
 <body>
@@ -425,6 +502,13 @@
     <div class="processing-text" id="processingText">圧縮処理中...</div>
     <div class="processing-subtext" id="processingSubtext">しばらくお待ちください</div>
     <div class="file-counter" id="fileCounter"></div>
+  </div>
+
+  <!-- デバッグパネル -->
+  <div class="debug-container active" id="debugContainer">
+    <button class="debug-toggle" id="debugToggle">📋 デバッグログを表示/非表示</button>
+    <div class="debug-panel active" id="debugPanel"></div>
+    <button class="debug-copy-btn" id="debugCopyBtn">📋 ログをすべてコピー</button>
   </div>
 
   <!-- ===== JavaScript ===== -->

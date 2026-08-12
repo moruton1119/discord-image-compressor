@@ -278,3 +278,61 @@ function escapeHtml(text) {
 // 画面外ドロップ無効化
 window.addEventListener('dragover', (e) => e.preventDefault());
 window.addEventListener('drop', (e) => e.preventDefault());
+
+// ===== デバッグパネル =====
+const debugToggle = document.getElementById('debugToggle');
+const debugPanel = document.getElementById('debugPanel');
+const debugCopyBtn = document.getElementById('debugCopyBtn');
+
+debugToggle.addEventListener('click', () => {
+  debugPanel.classList.toggle('active');
+});
+
+debugCopyBtn.addEventListener('click', async () => {
+  const logs = debugPanel.innerText || 'ログなし';
+  try {
+    await navigator.clipboard.writeText(logs);
+    debugCopyBtn.textContent = '✅ コピーしました!';
+  } catch (e) {
+    // フォールバック: テキストエリアを表示して手動コピー
+    const ta = document.createElement('textarea');
+    ta.value = logs;
+    ta.style.position = 'fixed';
+    ta.style.top = '0';
+    ta.style.left = '0';
+    ta.style.width = '100%';
+    ta.style.height = '300px';
+    ta.style.fontSize = '12px';
+    ta.style.zIndex = '99999';
+    document.body.appendChild(ta);
+    ta.select();
+    document.execCommand('copy');
+    document.body.removeChild(ta);
+    debugCopyBtn.textContent = '✅ コピーしました!';
+  }
+  setTimeout(() => { debugCopyBtn.textContent = '📋 ログをすべてコピー'; }, 2000);
+});
+
+// ブラウザ情報を初期ログに出力
+function logBrowserInfo() {
+  const lines = [];
+  lines.push(`UA: ${navigator.userAgent}`);
+  lines.push(`Platform: ${navigator.platform}`);
+  lines.push(`SharedArrayBuffer: ${typeof SharedArrayBuffer !== 'undefined' ? '✅ 利用可能' : '❌ 利用不可'}`);
+  lines.push(`crossOriginIsolated: ${self.crossOriginIsolated}`);
+  lines.push(`WebAssembly: ${typeof WebAssembly !== 'undefined' ? '✅' : '❌'}`);
+  lines.push(`Device Memory: ${navigator.deviceMemory || 'unknown'} GB`);
+  lines.push(`Hardware Concurrency: ${navigator.hardwareConcurrency || 'unknown'} cores`);
+
+  const time = new Date().toLocaleTimeString();
+  lines.forEach(line => {
+    const entry = `[${time}] [INFO] ${line}`;
+    console.log(entry);
+    const div = document.createElement('div');
+    div.className = 'debug-line debug-info';
+    div.textContent = entry;
+    debugPanel.appendChild(div);
+  });
+}
+
+logBrowserInfo();
