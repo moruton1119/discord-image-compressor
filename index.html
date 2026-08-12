@@ -231,6 +231,76 @@
       color: #5865F2;
       text-decoration: none;
     }
+
+    /* ===== 処理中オーバーレイ ===== */
+    .processing-overlay {
+      display: none;
+      position: fixed;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      background: rgba(10, 10, 26, 0.85);
+      backdrop-filter: blur(4px);
+      z-index: 9999;
+      align-items: center;
+      justify-content: center;
+      flex-direction: column;
+      gap: 20px;
+    }
+
+    .processing-overlay.active {
+      display: flex;
+    }
+
+    .processing-overlay .spinner {
+      width: 64px;
+      height: 64px;
+      border: 5px solid rgba(88, 101, 242, 0.2);
+      border-top-color: #5865F2;
+      border-radius: 50%;
+      animation: spin 0.8s linear infinite;
+    }
+
+    @keyframes spin {
+      to { transform: rotate(360deg); }
+    }
+
+    .processing-overlay .processing-text {
+      font-size: 1.2rem;
+      font-weight: 600;
+      color: #e0e0e0;
+    }
+
+    .processing-overlay .processing-subtext {
+      font-size: 0.9rem;
+      color: #888;
+      max-width: 400px;
+      text-align: center;
+    }
+
+    .processing-overlay .file-counter {
+      font-size: 0.85rem;
+      color: #5865F2;
+      font-weight: 600;
+    }
+
+    /* ===== ドロップエリア無効化状態 ===== */
+    .upload-area.processing {
+      pointer-events: none;
+      opacity: 0.4;
+      border-color: #555;
+      cursor: not-allowed;
+    }
+
+    .upload-area.processing .icon {
+      animation: pulse 1.2s ease-in-out infinite;
+    }
+
+    @keyframes pulse {
+      0%, 100% { opacity: 1; transform: scale(1); }
+      50% { opacity: 0.5; transform: scale(0.9); }
+    }
   </style>
 </head>
 <body>
@@ -266,6 +336,14 @@
   <div class="footer-note">
     🔒 全処理はブラウザ内で完結します。サーバーへの送信は一切ありません。<br>
     Discord無料プランの添付ファイル上限（10MB）に最適化。
+  </div>
+
+  <!-- 処理中オーバーレイ -->
+  <div class="processing-overlay" id="processingOverlay">
+    <div class="spinner"></div>
+    <div class="processing-text" id="processingText">圧縮処理中...</div>
+    <div class="processing-subtext" id="processingSubtext">しばらくお待ちください</div>
+    <div class="file-counter" id="fileCounter"></div>
   </div>
 
   <script src="compressor.js"></script>

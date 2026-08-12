@@ -19,12 +19,23 @@ const results = document.getElementById('results');
 const progressBar = document.getElementById('progressBar');
 const progressFill = document.getElementById('progressFill');
 const formatSelect = document.getElementById('formatSelect');
+const processingOverlay = document.getElementById('processingOverlay');
+const processingText = document.getElementById('processingText');
+const processingSubtext = document.getElementById('processingSubtext');
+const fileCounter = document.getElementById('fileCounter');
+
+// ============ 処理中フラグ（連続ドロップ防止） ============
+let isProcessing = false;
 
 // ============ イベントリスナー ============
-uploadArea.addEventListener('click', () => fileInput.click());
+uploadArea.addEventListener('click', () => {
+  if (isProcessing) return;
+  fileInput.click();
+});
 
 uploadArea.addEventListener('dragover', (e) => {
   e.preventDefault();
+  if (isProcessing) return;
   uploadArea.classList.add('dragover');
 });
 
@@ -35,12 +46,21 @@ uploadArea.addEventListener('dragleave', () => {
 uploadArea.addEventListener('drop', (e) => {
   e.preventDefault();
   uploadArea.classList.remove('dragover');
+  if (isProcessing) return;
   handleFiles(e.dataTransfer.files);
 });
 
 fileInput.addEventListener('change', (e) => {
+  if (isProcessing) {
+    e.target.value = '';
+    return;
+  }
   handleFiles(e.target.files);
 });
+
+// ドロップエリア外にドロップしても何も起きないようにする
+window.addEventListener('dragover', (e) => e.preventDefault());
+window.addEventListener('drop', (e) => e.preventDefault());
 
 // ============ ファイル処理 ============
 async function handleFiles(files) {
@@ -50,11 +70,16 @@ async function handleFiles(files) {
     return;
   }
 
+  // ===== 処理中ロック開始 =====
+  isProcessing = true;
+  uploadArea.classList.add('processing');
+  processingOverlay.classList.add('active');
   progressBar.classList.add('active');
   const format = formatSelect.value;
 
   for (let i = 0; i < imageFiles.length; i++) {
     updateProgress((i / imageFiles.length) * 100);
+    updateProcessingUI(i + 1, imageFiles.length, imageFiles[i].name);
     try {
       const result = await compressImage(imageFiles[i], format);
       addResultCard(imageFiles[i], result);
@@ -65,10 +90,28 @@ async function handleFiles(files) {
   }
 
   updateProgress(100);
+
+  // ===== 処理中ロック解除 =====
   setTimeout(() => {
     progressBar.classList.remove('active');
     progressFill.style.width = '0%';
+    uploadArea.classList.remove('processing');
+    processingOverlay.classList.remove('active');
+    isProcessing = false;
+    // ファイル入力をリセット（同じファイルを再選択可能にする）
+    fileInput.value = '';
   }, 500);
+}
+
+function updateProcessingUI(current, total, filename) {
+  processingText.textContent = '圧縮処理中...';
+  processingSubtext.textContent = truncate(filename, 50);
+  fileCounter.textContent = `${current} / ${total} 枚目`;
+}
+
+function truncate(str, maxLen) {
+  if (str.length <= maxLen) return str;
+  return str.slice(0, maxLen - 3) + '...';
 }
 
 function updateProgress(percent) {
