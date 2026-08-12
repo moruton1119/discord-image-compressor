@@ -118,18 +118,39 @@ const videoUploadArea = document.getElementById('videoUploadArea');
 const videoInput = document.getElementById('videoInput');
 const videoResults = document.getElementById('videoResults');
 
-videoUploadArea.addEventListener('click', () => { if (!isProcessing) videoInput.click(); });
+videoUploadArea.addEventListener('click', () => {
+  console.log('[VIDEO] 動画エリアクリック');
+  if (!isProcessing) videoInput.click();
+});
 videoUploadArea.addEventListener('dragover', (e) => { e.preventDefault(); if (!isProcessing) videoUploadArea.classList.add('dragover'); });
 videoUploadArea.addEventListener('dragleave', () => videoUploadArea.classList.remove('dragover'));
 videoUploadArea.addEventListener('drop', (e) => {
   e.preventDefault();
   videoUploadArea.classList.remove('dragover');
+  console.log('[VIDEO] ドロップ検知:', e.dataTransfer.files.length, 'ファイル');
   if (!isProcessing && e.dataTransfer.files.length > 0) handleVideo(e.dataTransfer.files[0]);
 });
-videoInput.addEventListener('change', (e) => { if (!isProcessing && e.target.files.length > 0) handleVideo(e.target.files[0]); });
+videoInput.addEventListener('change', (e) => {
+  console.log('[VIDEO] ファイル選択:', e.target.files.length, 'ファイル');
+  if (!isProcessing && e.target.files.length > 0) handleVideo(e.target.files[0]);
+});
 
 async function handleVideo(file) {
-  if (!file.type.startsWith('video/')) { alert('動画ファイルをアップロードしてください'); return; }
+  console.log('[VIDEO] handleVideo:', file.name, 'type=', file.type, 'size=', (file.size/1048576).toFixed(2), 'MB');
+  // デバッグパネルにも出力
+  const dp = document.getElementById('debugPanel');
+  if (dp) {
+    const t = new Date().toLocaleTimeString();
+    const line = document.createElement('div');
+    line.className = 'debug-line debug-load';
+    line.textContent = `[${t}] [VIDEO] ファイル受付: ${file.name} (${(file.size/1048576).toFixed(2)}MB)`;
+    dp.appendChild(line);
+  }
+  if (!file.type.startsWith('video/')) {
+    console.error('[VIDEO] 動画ではない:', file.type);
+    alert('動画ファイルをアップロードしてください');
+    return;
+  }
 
   isProcessing = true;
   videoUploadArea.classList.add('processing');
@@ -142,7 +163,18 @@ async function handleVideo(file) {
     processingSubtext.textContent = '初回は数秒かかります';
     fileCounter.textContent = '';
 
+    console.log('[VIDEO] ffmpeg.wasm を動的インポート中...');
+    const dp = document.getElementById('debugPanel');
+    if (dp) {
+      const t = new Date().toLocaleTimeString();
+      const line = document.createElement('div');
+      line.className = 'debug-line debug-load';
+      line.textContent = `[${t}] [LOAD] video-compressor.js をインポート中...`;
+      dp.appendChild(line);
+    }
+
     const { compressVideo } = await import('./video-compressor.js');
+    console.log('[VIDEO] イポート完了、圧縮開始...');
 
     const result = await compressVideo(
       file,
@@ -153,6 +185,15 @@ async function handleVideo(file) {
     addVideoResult(file, result);
   } catch (err) {
     console.error('動画圧縮エラー:', err);
+    // デバッグパネルにもエラー表示
+    const dp = document.getElementById('debugPanel');
+    if (dp) {
+      const t = new Date().toLocaleTimeString();
+      const line = document.createElement('div');
+      line.className = 'debug-line debug-error';
+      line.textContent = `[${t}] [ERROR] 動画圧縮失敗: ${err.message || err}\nStack: ${err.stack || 'no stack'}`;
+      dp.appendChild(line);
+    }
     addErrorCard(videoResults, file, err.message);
   }
 
