@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Discord 画像圧縮くん - 10MB以下にするやつ</title>
+  <title>Discord 圧縮くん - 画像/動画を10MB以下にするやつ</title>
   <style>
     * {
       margin: 0;
@@ -24,7 +24,7 @@
 
     header {
       text-align: center;
-      margin-bottom: 30px;
+      margin-bottom: 24px;
     }
 
     header h1 {
@@ -39,6 +39,50 @@
     header p {
       color: #888;
       font-size: 0.9rem;
+    }
+
+    /* ===== タブ ===== */
+    .tabs {
+      display: flex;
+      gap: 8px;
+      margin-bottom: 20px;
+      max-width: 600px;
+      width: 100%;
+    }
+
+    .tab {
+      flex: 1;
+      padding: 12px 20px;
+      background: #16213e;
+      border: 2px solid transparent;
+      border-radius: 12px;
+      cursor: pointer;
+      font-size: 1rem;
+      font-weight: 600;
+      color: #888;
+      transition: all 0.2s ease;
+      text-align: center;
+    }
+
+    .tab:hover {
+      color: #e0e0e0;
+    }
+
+    .tab.active {
+      background: rgba(88, 101, 242, 0.15);
+      border-color: #5865F2;
+      color: #e0e0e0;
+    }
+
+    .tab-content {
+      display: none;
+      flex-direction: column;
+      align-items: center;
+      width: 100%;
+    }
+
+    .tab-content.active {
+      display: flex;
     }
 
     .upload-area {
@@ -80,7 +124,7 @@
       margin-top: 6px;
     }
 
-    #fileInput {
+    #fileInput, #videoInput {
       display: none;
     }
 
@@ -285,7 +329,6 @@
       font-weight: 600;
     }
 
-    /* ===== ドロップエリア無効化状態 ===== */
     .upload-area.processing {
       pointer-events: none;
       opacity: 0.4;
@@ -301,37 +344,75 @@
       0%, 100% { opacity: 1; transform: scale(1); }
       50% { opacity: 0.5; transform: scale(0.9); }
     }
+
+    /* ===== 動画プレビュー ===== */
+    .video-preview {
+      width: 120px;
+      height: 80px;
+      border-radius: 8px;
+      object-fit: cover;
+      flex-shrink: 0;
+      background: #0a0a1a;
+    }
   </style>
 </head>
 <body>
   <header>
-    <h1>🖼️ Discord 画像圧縮くん</h1>
-    <p>10MB以下にサクッと圧縮！完全ローカル処理でファイル送信なし</p>
+    <h1>📦 Discord 圧縮くん</h1>
+    <p>画像も動画も10MB以下に！完全ローカル処理でファイル送信なし</p>
   </header>
 
-  <div class="settings">
-    <label>🎯 目標サイズ:</label>
-    <span class="target-size">10 MB</span>
-    <label>📦 出力フォーマット:</label>
-    <select id="formatSelect">
-      <option value="webp">WebP（推奨・最小サイズ）</option>
-      <option value="jpeg">JPEG（互換性重視）</option>
-      <option value="png">PNG（透明情報保持・非圧縮）</option>
-    </select>
+  <!-- タブ切り替え -->
+  <div class="tabs">
+    <div class="tab active" data-tab="image">🖼️ 画像圧縮 (Rust/WASM)</div>
+    <div class="tab" data-tab="video">🎬 動画圧縮 (ffmpeg.wasm)</div>
   </div>
 
-  <div class="upload-area" id="uploadArea">
-    <div class="icon">📎</div>
-    <div class="text">ここに画像をドロップ または クリックして選択</div>
-    <div class="subtext">対応形式: JPEG, PNG, WebP, GIF, BMP</div>
+  <!-- ===== 画像タブ ===== -->
+  <div class="tab-content active" id="imageTab">
+    <div class="settings">
+      <label>🎯 目標サイズ:</label>
+      <span class="target-size">10 MB</span>
+      <label>📦 出力フォーマット:</label>
+      <select id="formatSelect">
+        <option value="webp">WebP（推奨・最小サイズ）</option>
+        <option value="jpeg">JPEG（互換性重視）</option>
+        <option value="png">PNG（可逆圧縮）</option>
+      </select>
+    </div>
+
+    <div class="upload-area" id="uploadArea">
+      <div class="icon">📎</div>
+      <div class="text">ここに画像をドロップ または クリックして選択</div>
+      <div class="subtext">対応形式: JPEG, PNG, WebP, GIF, BMP / 🦀 Rust/WASMエンジン搭載</div>
+    </div>
+    <input type="file" id="fileInput" accept="image/*" multiple>
+
+    <div class="results" id="results"></div>
   </div>
-  <input type="file" id="fileInput" accept="image/*" multiple>
+
+  <!-- ===== 動画タブ ===== -->
+  <div class="tab-content" id="videoTab">
+    <div class="settings">
+      <label>🎯 目標サイズ:</label>
+      <span class="target-size">10 MB</span>
+      <label>📦 出力:</label>
+      <span style="color:#aaa;">MP4 (H.264 + AAC)</span>
+    </div>
+
+    <div class="upload-area" id="videoUploadArea">
+      <div class="icon">🎬</div>
+      <div class="text">ここに動画をドロップ または クリックして選択</div>
+      <div class="subtext">対応形式: MP4, WebM, MOV, AVI / ⚠️ 処理に時間がかかります</div>
+    </div>
+    <input type="file" id="videoInput" accept="video/*">
+
+    <div class="results" id="videoResults"></div>
+  </div>
 
   <div class="progress-bar" id="progressBar">
     <div class="fill" id="progressFill"></div>
   </div>
-
-  <div class="results" id="results"></div>
 
   <div class="footer-note">
     🔒 全処理はブラウザ内で完結します。サーバーへの送信は一切ありません。<br>
@@ -346,6 +427,7 @@
     <div class="file-counter" id="fileCounter"></div>
   </div>
 
-  <script type="module" src="compressor-wasm.js"></script>
+  <!-- ===== JavaScript ===== -->
+  <script type="module" src="app.js"></script>
 </body>
 </html>
