@@ -9,13 +9,25 @@
  * 4. サイズオーバーの場合はビットレートを下げて再トライ
  * 
  * 全処理がブラウザ内で完結（サーバー通信なし）
+ * 
+ * 【重要】ffmpeg.wasm 0.12 は Web Worker 上で動くため
+ * classWorkerURL の指定が必須（指定しないとWorkerが見つからずエラー）
  */
 
 import { FFmpeg } from 'https://unpkg.com/@ffmpeg/ffmpeg@0.12.15/dist/esm/index.js';
 import { fetchFile, toBlobURL } from 'https://unpkg.com/@ffmpeg/util@0.12.2/dist/esm/index.js';
 
+// ffmpeg core と worker のCDN URL
+const FFMPEG_CORE_URL = 'https://unpkg.com/@ffmpeg/core@0.12.10/dist/esm';
+const FFMPEG_WORKER_URL = 'https://unpkg.com/@ffmpeg/ffmpeg@0.12.15/dist/esm/worker.js';
+
+const TARGET_SIZE_MB = 10;
+const TARGET_SIZE_BYTES = TARGET_SIZE_MB * 1024 * 1024;
+
+let ffmpeg = null;
+let ffmpegReady = false;
+
 // ============ デバッグログ収集 ============
-// スマホからコンソールが見えなくてもエラー原因を画面で確認できるように
 const debugLogs = [];
 
 function addDebugLog(level, message) {
@@ -23,7 +35,6 @@ function addDebugLog(level, message) {
   const entry = `[${time}] [${level}] ${message}`;
   debugLogs.push(entry);
   console.log(entry);
-  // 画面上のデバッグパネルにも追記
   const panel = document.getElementById('debugPanel');
   if (panel) {
     const line = document.createElement('div');
@@ -34,7 +45,7 @@ function addDebugLog(level, message) {
   }
 }
 
-// ブラウザ環境情報をログに残す
+// ブラウザ環境情報
 export function logBrowserInfo() {
   addDebugLog('INFO', `UA: ${navigator.userAgent}`);
   addDebugLog('INFO', `Platform: ${navigator.platform}`);
@@ -60,17 +71,6 @@ console.error = (...args) => {
   _consoleError.apply(console, args);
 };
 
-const TARGET_SIZE_MB = 10;
-const TARGET_SIZE_BYTES = TARGET_SIZE_MB * 1024 * 1024;
-
-// ffmpeg core のCDN URL
-const FFMPEG_CORE_URL = 'https://unpkg.com/@ffmpeg/core@0.12.10/dist/esm';
-// シングルスレッド版（SharedArrayBuffer不要・GitHub Pages対応）
-// マルチスレッド版を使う場合は core-mt だが、COOP/COEPヘッダーが必要
-
-let ffmpeg = null;
-let ffmpegReady = false;
-
 // ============ ffmpeg初期化 ============
 async function ensureFFmpeg(onProgress) {
   if (ffmpegReady) return ffmpeg;
@@ -89,14 +89,18 @@ async function ensureFFmpeg(onProgress) {
     addDebugLog('FFMPEG', message);
   });
 
-  // CDNからコアを読み込む
-  addDebugLog('LOAD', 'ffmpeg core をCDNから読み込み中...');
+  // CDNからコアとWorkerを読み込む
+  // 【重要】classWorkerURLを指定しないとWorkerがバンドルされて見つからずエラーになる
+  addDebugLog('LOAD', 'ffmpeg core + worker をCDNから読み込み中...');
   try {
     const coreURL = await toBlobURL(`${FFMPEG_CORE_URL}/ffmpeg-core.js`, 'text/javascript');
     addDebugLog('LOAD', 'ffmpeg-core.js 取得OK');
     const wasmURL = await toBlobURL(`${FFMPEG_CORE_URL}/ffmpeg-core.wasm`, 'application/wasm');
-    addDebugLog('LOAD', `ffmpeg-core.wasm 取得OK`);
-    await ffmpeg.load({ coreURL, wasmURL });
+    addDebugLog('LOAD', 'ffmpeg-core.wasm 取得OK');
+    // Worker.jsもBlob URL化してCORS回避
+    const classWorkerURL = await toBlobURL(FFMPEG_WORKER_URL, 'text/javascript');
+    addDebugLog('LOAD', 'worker.js 取得OK');
+    await ffmpeg.load({ coreURL, wasmURL, classWorkerURL });
     addDebugLog('LOAD', 'ffmpeg.load() 完了!');
   } catch (loadErr) {
     addDebugLog('ERROR', `ffmpeg.load() 失敗: ${loadErr.message || loadErr}`);
@@ -109,13 +113,6 @@ async function ensureFFmpeg(onProgress) {
 
 // ============ 動画圧縮メイン ============
 
-/**
- * 動画を10MB以下に圧縮する
- * @param {File} file - 動画ファイル
- * @param {function} onProgress - 進捗コールバック(0-100)
- * @param {function} onStatus - ステータステキスト更新コールバック
- * @returns {Promise<{blob: Blob, originalSize: number, compressedSize: number}>}
- */
 export async function compressVideo(file, onProgress, onStatus) {
   addDebugLog('INFO', `動画圧縮開始: ${file.name}`);
   addDebugLog('INFO', `ファイルサイズ: ${(file.size / 1024 / 1024).toFixed(2)} MB (${file.size} bytes)`);
@@ -125,32 +122,30 @@ export async function compressVideo(file, onProgress, onStatus) {
   const ff = await ensureFFmpeg(onProgress);
 
   const inputName = 'input_video';
-  addDebugLog('STEP', '動画データをffmpeg仮想FSに書き込み中...');
   const outputName = 'output.mp4';
 
+  addDebugLog('STEP', '動画データをffmpeg仮想FSに書き込み中...');
   // 入力ファイルをffmpegの仮想FSに書き込む
   onStatus?.('動画データを読み込み中...');
   const fileData = await fetchFile(file);
   await ff.writeFile(inputName, fileData);
+  addDebugLog('STEP', `仮想FS書き込み完了: ${fileData.length} bytes`);
 
-  // 動画の長さを取得（ffprobe相当）
+  // 動画の長さを取得
   onStatus?.('動画情報を解析中...');
   const duration = await getVideoDuration(ff, inputName);
   addDebugLog('INFO', `動画の長さ: ${duration.toFixed(1)}秒`);
 
   // 目標ビットレートを計算
-  // bitrate(kbps) = targetSize(KB) × 8 / duration(s)
-  // 10MB = 10240KB, 音声を考慮して少し余裕を持たせる
-  const audioBitrateKbps = 96; // 音声ビットレート
+  const audioBitrateKbps = 96;
   const targetVideoBitrateKbps = Math.floor(
     (TARGET_SIZE_BYTES * 8 / 1000 / duration) - audioBitrateKbps
   );
-
-  console.log(`🎯 目標ビデオビットレート: ${targetVideoBitrateKbps}kbps`);
+  addDebugLog('INFO', `目標ビデオビットレート: ${targetVideoBitrateKbps}kbps`);
 
   // Step 1: 計算したビットレートで圧縮
   onStatus?.(`圧縮中... ( bitrate: ${targetVideoBitrateKbps}kbps )`);
-  
+
   let result = await tryCompress(ff, inputName, outputName, targetVideoBitrateKbps, audioBitrateKbps, onProgress);
 
   if (!result) {
@@ -158,7 +153,7 @@ export async function compressVideo(file, onProgress, onStatus) {
   }
 
   let compressedSize = result.size;
-  console.log(`📦 1回目: ${(compressedSize / 1024 / 1024).toFixed(2)} MB`);
+  addDebugLog('INFO', `1回目: ${(compressedSize / 1024 / 1024).toFixed(2)} MB`);
 
   // Step 2: サイズオーバーの場合はビットレートを下げて再トライ（最大3回）
   let currentBitrate = targetVideoBitrateKbps;
@@ -167,38 +162,36 @@ export async function compressVideo(file, onProgress, onStatus) {
 
   while (compressedSize > TARGET_SIZE_BYTES && retryCount < maxRetries) {
     retryCount++;
-    // ビットレートを20%カット
     currentBitrate = Math.floor(currentBitrate * 0.8);
-    
-    onStatus?.(`再圧縮中... ( bitrate: ${currentBitrate}kbps ) [${retryCount}/${maxRetries}]`);
-    console.log(`🔄 再圧縮 ${retryCount}: bitrate=${currentBitrate}kbps`);
 
-    // クリーンアップして再トライ
+    onStatus?.(`再圧縮中... ( bitrate: ${currentBitrate}kbps ) [${retryCount}/${maxRetries}]`);
+    addDebugLog('STEP', `再圧縮 ${retryCount}: bitrate=${currentBitrate}kbps`);
+
     try { await ff.deleteFile(outputName); } catch(e) {}
 
     result = await tryCompress(ff, inputName, outputName, currentBitrate, audioBitrateKbps, onProgress);
     if (result) {
       compressedSize = result.size;
-      console.log(`📦 再圧縮${retryCount}回目: ${(compressedSize / 1024 / 1024).toFixed(2)} MB`);
+      addDebugLog('INFO', `再圧縮${retryCount}回目: ${(compressedSize / 1024 / 1024).toFixed(2)} MB`);
     }
   }
 
   // Step 3: まだダメなら解像度も下げる
   if (compressedSize > TARGET_SIZE_BYTES) {
     onStatus?.('解像度を下げて圧縮中...');
-    console.log('📐 解像度ダウンスケール開始');
+    addDebugLog('STEP', '解像度ダウンスケール開始');
 
     const scales = ['1280:-2', '960:-2', '640:-2', '480:-2'];
-    
+
     for (const scale of scales) {
       try { await ff.deleteFile(outputName); } catch(e) {}
 
       onStatus?.(`解像度 ${scale.split(':')[0]}px で圧縮中...`);
       result = await tryCompressWithScale(ff, inputName, outputName, currentBitrate, audioBitrateKbps, scale, onProgress);
-      
+
       if (result && result.size <= TARGET_SIZE_BYTES) {
         compressedSize = result.size;
-        console.log(`✅ ${scale}で目標達成: ${(compressedSize / 1024 / 1024).toFixed(2)} MB`);
+        addDebugLog('INFO', `${scale}で目標達成: ${(compressedSize / 1024 / 1024).toFixed(2)} MB`);
         break;
       }
       if (result) {
@@ -216,7 +209,7 @@ export async function compressVideo(file, onProgress, onStatus) {
   }
 
   const blob = new Blob([result.buffer], { type: 'video/mp4' });
-  console.log(`🎉 圧縮完了: ${(file.size / 1024 / 1024).toFixed(2)}MB → ${(blob.size / 1024 / 1024).toFixed(2)}MB`);
+  addDebugLog('INFO', `圧縮完了: ${(file.size / 1024 / 1024).toFixed(2)}MB → ${(blob.size / 1024 / 1024).toFixed(2)}MB`);
 
   return {
     blob,
@@ -227,28 +220,21 @@ export async function compressVideo(file, onProgress, onStatus) {
 
 // ============ ヘルパー関数 ============
 
-/**
- * ffmpegで動画の長さを取得
- */
 async function getVideoDuration(ff, filename) {
-  // HTML5 video elementを使ってdurationを取得（より確実）
   return new Promise((resolve) => {
     const video = document.createElement('video');
     video.preload = 'metadata';
     video.onloadedmetadata = () => {
       URL.revokeObjectURL(video.src);
-      resolve(video.duration || 60); // 取得失敗時は60秒と仮定
+      resolve(video.duration || 60);
     };
     video.onerror = () => {
-      resolve(60); // フォールバック
+      resolve(60);
     };
-    video.src = URL.createObjectURL(new Blob([await ff.readFile(filename)]));
+    video.src = URL.createObjectURL(new Blob([Uint8Array.from(await ff.readFile(filename))]));
   });
 }
 
-/**
- * ビットレート指定で圧縮を試行
- */
 async function tryCompress(ff, inputName, outputName, videoBitrate, audioBitrate, onProgress) {
   try {
     await ff.exec([
@@ -268,14 +254,11 @@ async function tryCompress(ff, inputName, outputName, videoBitrate, audioBitrate
     const data = await ff.readFile(outputName);
     return { buffer: data.buffer, size: data.length };
   } catch (err) {
-    console.error('圧縮エラー:', err);
+    addDebugLog('ERROR', `圧縮エラー: ${err.message || err}`);
     return null;
   }
 }
 
-/**
- * スケール指定付きで圧縮を試行
- */
 async function tryCompressWithScale(ff, inputName, outputName, videoBitrate, audioBitrate, scale, onProgress) {
   try {
     await ff.exec([
@@ -296,7 +279,7 @@ async function tryCompressWithScale(ff, inputName, outputName, videoBitrate, aud
     const data = await ff.readFile(outputName);
     return { buffer: data.buffer, size: data.length };
   } catch (err) {
-    console.error('圧縮エラー:', err);
+    addDebugLog('ERROR', `圧縮エラー: ${err.message || err}`);
     return null;
   }
 }
