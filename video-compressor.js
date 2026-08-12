@@ -27,36 +27,41 @@ function addDebugLog(level, message) {
 }
 
 // ============ ffmpeg UMD版の動的ロード ============
-// script タグでUMD版を読み込み、グローバル変数から取得する
+// toBlobURL と fetchFile は自前実装（UMD版utilはrequire()を使うためブラウザ単体で動かない）
 async function loadFFmpegUMD() {
-  // 既に読み込み済みならグローバルから取得
-  if (window.FFmpegWASM && window.FFmpegUtil) {
-    return { FFmpeg: window.FFmpegWASM.FFmpeg, fetchFile: window.FFmpegUtil.fetchFile, toBlobURL: window.FFmpegUtil.toBlobURL };
-  }
+  if (window._FFmpegClass) return;
 
   addDebugLog('LOAD', 'UMD版スクリプトを読み込み中...');
 
-  // UMD版を script タグで読み込む
+  // util は require() を使うためブラウザで動かない → 自前実装
+  // ffmpeg UMD版だけ読み込む
   await loadScript('https://unpkg.com/@ffmpeg/ffmpeg@0.12.15/dist/umd/ffmpeg.js');
   addDebugLog('LOAD', 'ffmpeg UMD 読み込みOK');
 
-  await loadScript('https://unpkg.com/@ffmpeg/util@0.12.2/dist/umd/index.js');
-  addDebugLog('LOAD', 'ffmpeg util UMD 読み込みOK');
-
-  // グローバル変数から取得（UMD版の公開名）
-  // @ffmpeg/ffmpeg UMD版 → window.FFmpegWASM.FFmpeg
-  // @ffmpeg/util UMD版 → window.FFmpegUtil.fetchFile / toBlobURL
-  const FFmpeg = window.FFmpegWASM ? window.FFmpegWASM.FFmpeg : null;
-  const fetchFile = window.FFmpegUtil ? window.FFmpegUtil.fetchFile : null;
-  const toBlobURL = window.FFmpegUtil ? window.FFmpegUtil.toBlobURL : null;
-
-  if (!FFmpeg) {
-    // フォールバック: 別のグローバル名を試す
-    addDebugLog('WARN', `FFmpegWASM not found. グローバルキー一覧: ${Object.keys(window).filter(k => k.toLowerCase().includes('ffmpeg')).join(', ')}`);
-    throw new Error('FFmpegクラスが見つかりません (UMD)');
+  if (!window.FFmpegWASM || !window.FFmpegWASM.FFmpeg) {
+    const keys = Object.keys(window).filter(k => k.toLowerCase().includes('ffmpeg'));
+    throw new Error(`FFmpegクラスが見つかりません。グローバルキー: ${keys.join(', ') || 'なし'}`);
   }
 
-  return { FFmpeg, fetchFile, toBlobURL };
+  window._FFmpegClass = window.FFmpegWASM.FFmpeg;
+  addDebugLog('LOAD', `FFmpegクラス取得OK: ${typeof window._FFmpegClass}`);
+}
+
+// toBlobURL の自前実装
+async function toBlobURL(url, mimeType) {
+  addDebugLog('LOAD', `fetch中: ${url}`);
+  const resp = await fetch(url);
+  if (!resp.ok) throw new Error(`fetch失敗: ${url} (${resp.status})`);
+  const buf = await resp.arrayBuffer();
+  const blob = new Blob([buf], { type: mimeType });
+  const blobUrl = URL.createObjectURL(blob);
+  addDebugLog('LOAD', `Blob URL生成OK: ${url.split('/').pop()} → ${blobUrl.slice(0, 50)}...`);
+  return blobUrl;
+}
+
+// fetchFile の自前実装
+async function fetchFile(file) {
+  return new Uint8Array(await file.arrayBuffer());
 }
 
 function loadScript(src) {
@@ -73,11 +78,8 @@ function loadScript(src) {
 async function ensureFFmpeg(onProgress) {
   if (ffmpegReady) return ffmpeg;
 
-  const { FFmpeg, fetchFile: _fetchFile, toBlobURL: _toBlobURL } = await loadFFmpegUMD();
-
-  // グローバルに保存（後でcompressVideo内で使う）
-  window._fetchFile = _fetchFile;
-  window._toBlobURL = _toBlobURL;
+  await loadFFmpegUMD();
+  const FFmpeg = window._FFmpegClass;
 
   ffmpeg = new FFmpeg();
 
@@ -99,11 +101,11 @@ async function ensureFFmpeg(onProgress) {
 
   addDebugLog('LOAD', 'ffmpeg core + worker を読み込み中...');
   try {
-    const coreURL = await _toBlobURL(`${FFMPEG_CORE_URL}/ffmpeg-core.js`, 'text/javascript');
+    const coreURL = await toBlobURL(`${FFMPEG_CORE_URL}/ffmpeg-core.js`, 'text/javascript');
     addDebugLog('LOAD', 'ffmpeg-core.js 取得OK');
-    const wasmURL = await _toBlobURL(`${FFMPEG_CORE_URL}/ffmpeg-core.wasm`, 'application/wasm');
+    const wasmURL = await toBlobURL(`${FFMPEG_CORE_URL}/ffmpeg-core.wasm`, 'application/wasm');
     addDebugLog('LOAD', 'ffmpeg-core.wasm 取得OK');
-    const classWorkerURL = await _toBlobURL(FFMPEG_WORKER_URL, 'text/javascript');
+    const classWorkerURL = await toBlobURL(FFMPEG_WORKER_URL, 'text/javascript');
     addDebugLog('LOAD', 'worker.js 取得OK');
     await ffmpeg.load({ coreURL, wasmURL, classWorkerURL });
     addDebugLog('LOAD', 'ffmpeg.load() 完了!');
@@ -125,7 +127,6 @@ export async function compressVideo(file, onProgress, onStatus) {
 
   onStatus?.('ffmpeg.wasm を読み込み中...');
   const ff = await ensureFFmpeg(onProgress);
-  const fetchFile = window._fetchFile;
 
   const inputName = 'input_video';
   const outputName = 'output.mp4';
