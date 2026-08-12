@@ -512,6 +512,14 @@
   </div>
 
   <!-- ===== JavaScript ===== -->
+  <!-- インラインエラーハンドラー（app.js読み込み失敗時に真っ白を防ぐ） -->
+  <script>
+    window.addEventListener('error', function(e) {
+      if (e.message && e.message.includes('import')) {
+        document.body.innerHTML = '<div style="color:#ff7b72;padding:40px;font-family:sans-serif;text-align:center;"><h2>⚠️ アプリの読み込みに失敗しました</h2><p style="margin:20px 0;color:#aaa;">' + e.message + '</p><p style="color:#888;">URLバーの更新ボタン長押し → 厳密な再読み込みを試してください</p></div>';
+      }
+    });
+  </script>
   <script type="module" src="app.js"></script>
 </body>
 </html>

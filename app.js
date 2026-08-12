@@ -30,7 +30,6 @@ let isProcessing = false;
 // ============================================================
 //  画像圧縮（Rust/WASM）
 // ============================================================
-import init, { ImageCompressor } from './image_compressor.js';
 
 const TARGET_SIZE_MB = 10;
 const TARGET_SIZE_BYTES = TARGET_SIZE_MB * 1024 * 1024;
@@ -40,8 +39,9 @@ let compressor = null;
 
 async function ensureWasm() {
   if (!wasmReady) {
-    await init('./image_compressor_bg.wasm');
-    compressor = new ImageCompressor();
+    const wasmModule = await import('./image_compressor.js');
+    await wasmModule.init('./image_compressor_bg.wasm');
+    compressor = new wasmModule.ImageCompressor();
     wasmReady = true;
     console.log('🦀 Rust/WASM エンジン初期化完了!');
   }
