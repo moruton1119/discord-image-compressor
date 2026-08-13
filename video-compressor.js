@@ -34,10 +34,10 @@ async function ensureFFmpeg(onProgress) {
   // ffmpeg.wasm 0.11 の UMD版を読み込み
   if (!window.createFFmpeg) {
     addDebugLog('LOAD', 'ffmpeg.wasm 0.11 UMD版を読み込み中...');
-    await loadScript('https://unpkg.com/@ffmpeg/core@0.11.0/dist/ffmpeg-core.js');
-    addDebugLog('LOAD', 'ffmpeg-core.js 読み込みOK');
+    // @ffmpeg/core-st (single thread版・SharedArrayBuffer不要)
+    await loadScript('https://unpkg.com/@ffmpeg/core-st@0.11.1/dist/ffmpeg-core.js');
+    addDebugLog('LOAD', 'ffmpeg-core.js (ST版) 読み込みOK');
 
-    // 0.11は core が全部入ってる（worker込み）
     // @ffmpeg/ffmpeg 0.11 を読み込む
     await loadScript('https://unpkg.com/@ffmpeg/ffmpeg@0.11.6/dist/ffmpeg.min.js');
     addDebugLog('LOAD', 'ffmpeg.min.js 読み込みOK');
@@ -52,7 +52,8 @@ async function ensureFFmpeg(onProgress) {
 
   ffmpegInstance = createFFmpeg({
     log: true,
-    corePath: 'https://unpkg.com/@ffmpeg/core@0.11.0/dist/ffmpeg-core.js',
+    // core-st (single thread版) を指定 - SharedArrayBuffer不要!
+    corePath: 'https://unpkg.com/@ffmpeg/core-st@0.11.1/dist/ffmpeg-core.js',
     progress: ({ ratio }) => {
       if (ratio >= 0 && ratio <= 1 && onProgress) {
         onProgress(ratio * 100);

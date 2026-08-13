@@ -37,15 +37,25 @@ const TARGET_SIZE_BYTES = TARGET_SIZE_MB * 1024 * 1024;
 let wasmReady = false;
 let compressor = null;
 
+let wasmInitError = null;
+
 async function ensureWasm() {
-  if (!wasmReady) {
+  if (wasmReady) return;
+  if (wasmInitError) throw wasmInitError;
+  try {
     const wasmModule = await import('./image_compressor.js');
-    // wasm-pack --target web の場合、init は default export
     const init = wasmModule.default;
+    if (typeof init !== 'function') {
+      throw new Error(`init関数が見つかりません。default=${typeof wasmModule.default}, keys=${Object.keys(wasmModule).join(',')}`);
+    }
     await init('./image_compressor_bg.wasm');
     compressor = new wasmModule.ImageCompressor();
     wasmReady = true;
     console.log('🦀 Rust/WASM エンジン初期化完了!');
+  } catch (err) {
+    wasmInitError = err;
+    console.error('WASM初期化エラー:', err);
+    throw err;
   }
 }
 
@@ -60,7 +70,10 @@ uploadArea.addEventListener('dragleave', () => uploadArea.classList.remove('drag
 uploadArea.addEventListener('drop', (e) => { e.preventDefault(); uploadArea.classList.remove('dragover'); if (!isProcessing) handleImages(e.dataTransfer.files); });
 fileInput.addEventListener('change', (e) => { if (!isProcessing) handleImages(e.target.files); });
 
-ensureWasm().catch(err => console.error('WASM初期化エラー:', err));
+// WASM初期化（非同期・エラーでもアプリは動く）
+ensureWasm().catch(err => {
+  console.error('WASM初期化エラー（画像圧縮は使用不可）:', err);
+});
 
 async function handleImages(files) {
   const imageFiles = Array.from(files).filter(f => f.type.startsWith('image/'));
