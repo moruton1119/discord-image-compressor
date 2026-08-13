@@ -104,6 +104,14 @@ export async function compressVideo(file, onProgress, onStatus) {
   // 入力ファイルを仮想FSに書き込む
   onStatus?.('動画データを読み込み中...');
   addDebugLog('STEP', '仮想FSに書き込み中...');
+
+  // メモリ使用量チェック（大雑把）
+  const fileSizeMB = file.size / 1024 / 1024;
+  const deviceMemory = navigator.deviceMemory || 4; // GB
+  if (fileSizeMB > deviceMemory * 1024 * 0.4) {
+    addDebugLog('WARN', `ファイルサイズ(${fileSizeMB.toFixed(1)}MB)がデバイスメモリ(${deviceMemory}GB)に対して大きいです。メモリ不足で失敗する可能性があります。`);
+  }
+
   const fileData = new Uint8Array(await file.arrayBuffer());
   ff.FS('writeFile', inputName, fileData);
   addDebugLog('STEP', `書き込み完了: ${fileData.length} bytes`);
@@ -211,6 +219,16 @@ async function tryCompress(ff, inputName, outputName, videoBitrate, audioBitrate
       outputName,
     );
     const data = ff.FS('readFile', outputName);
+    // 出力サイズが異常に小さい場合はエラー扱い
+    if (data.length < 1000) {
+      addDebugLog('ERROR', `出力が小さすぎます (${data.length} bytes)。エンコーダが失敗した可能性。`);
+      // 利用可能なエンコーダを確認
+      addDebugLog('FFMPEG', '利用可能エンコーダ確認中...');
+      try {
+        await ff.run('-encoders', '-hide_banner');
+      } catch(e) {}
+      return null;
+    }
     addDebugLog('FFMPEG', `完了: ${data.length} bytes`);
     return data;
   } catch (err) {
