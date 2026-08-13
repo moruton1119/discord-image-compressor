@@ -54,6 +54,8 @@ async function ensureFFmpeg(onProgress) {
     log: true,
     // core-st (single thread版) を指定 - SharedArrayBuffer不要!
     corePath: 'https://unpkg.com/@ffmpeg/core-st@0.11.1/dist/ffmpeg-core.js',
+    // core-stは proxy_main ではなく _main を使うため、mainNameを指定
+    mainName: 'main',
     progress: ({ ratio }) => {
       if (ratio >= 0 && ratio <= 1 && onProgress) {
         onProgress(ratio * 100);
