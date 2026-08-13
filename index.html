@@ -298,12 +298,7 @@
     }
 
     .processing-overlay .spinner {
-      width: 64px;
-      height: 64px;
-      border: 5px solid rgba(88, 101, 242, 0.2);
-      border-top-color: #5865F2;
-      border-radius: 50%;
-      animation: spin 0.8s linear infinite;
+      display: none;
     }
 
     @keyframes spin {
@@ -323,10 +318,29 @@
       text-align: center;
     }
 
+    .processing-overlay .progress-bar {
+      width: 320px;
+      max-width: 80vw;
+      height: 12px;
+      background: rgba(255, 255, 255, 0.1);
+      border-radius: 6px;
+      overflow: hidden;
+      margin-top: 8px;
+    }
+
+    .processing-overlay .progress-bar .fill {
+      height: 100%;
+      width: 0%;
+      background: linear-gradient(90deg, #5865F2, #9B59F2);
+      border-radius: 6px;
+      transition: width 0.3s ease;
+    }
+
     .processing-overlay .file-counter {
       font-size: 0.85rem;
       color: #5865F2;
       font-weight: 600;
+      margin-top: 4px;
     }
 
     .upload-area.processing {
@@ -487,9 +501,7 @@
     <div class="results" id="videoResults"></div>
   </div>
 
-  <div class="progress-bar" id="progressBar">
-    <div class="fill" id="progressFill"></div>
-  </div>
+  <!-- 古いプログレスバー（オーバーレイ内に移動したため削除） -->
 
   <div class="footer-note">
     🔒 全処理はブラウザ内で完結します。サーバーへの送信は一切ありません。<br>
@@ -498,9 +510,11 @@
 
   <!-- 処理中オーバーレイ -->
   <div class="processing-overlay" id="processingOverlay">
-    <div class="spinner"></div>
     <div class="processing-text" id="processingText">圧縮処理中...</div>
     <div class="processing-subtext" id="processingSubtext">しばらくお待ちください</div>
+    <div class="progress-bar" id="progressBar">
+      <div class="fill" id="progressFill"></div>
+    </div>
     <div class="file-counter" id="fileCounter"></div>
   </div>
 
