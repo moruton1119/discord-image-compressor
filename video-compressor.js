@@ -209,10 +209,10 @@ async function compressWithWebCodecs(file, videoInfo, targetWidth, targetHeight,
         decodedCount++;
         pendingDecodes--;
 
-        if (decodedCount % 30 === 0 || decodedCount === totalChunks) {
-          const pct = (decodedCount / totalChunks * 100);
+        if (decodedCount === totalChunks) {
+          const pct = 100;
           onProgress?.(pct);
-          addDebugLog('STEP', `${decodedCount}/${totalChunks} フレーム処理 (${pct.toFixed(0)}%)`);
+          addDebugLog('STEP', `全${totalChunks}フレーム処理完了`);
         }
 
         // すべてのチャンクを処理し終えたらエンコーダをフラッシュ
@@ -362,29 +362,21 @@ async function demuxMP4(file) {
 
 // decoder description（SPS/PPS）を取得 — H.264(avcC) と H.265(hvcC) 両対応
 function getDecoderDescription(track) {
-  addDebugLog('LOAD', `description探索: track keys = ${Object.keys(track).join(', ')}`);
-
-  // mp4box の track から stsd エントリを探す
-  // onReady 時点では mdia が無い場合があるため、mp4box の内部構造を辿る
-
-  // 方法1: track.mdia から辿る
   if (track.mdia && track.mdia.minf && track.mdia.minf.stbl && track.mdia.minf.stbl.stsd) {
     const stsd = track.mdia.minf.stbl.stsd;
     if (stsd.entries && stsd.entries.length > 0) {
       const entry = stsd.entries[0];
       if (entry.avcC) {
-        addDebugLog('LOAD', 'avcC description取得（H.264）');
+        addDebugLog('LOAD', 'description: avcC (H.264)');
         return new Uint8Array(entry.avcC.data);
       }
       if (entry.hvcC) {
-        addDebugLog('LOAD', 'hvcC description取得（H.265/HEVC）');
+        addDebugLog('LOAD', 'description: hvcC (H.265)');
         return new Uint8Array(entry.hvcC.data);
       }
     }
   }
-
-  // 方法2: mp4box の file 単位で track を辿る（onSamples時には使える）
-  addDebugLog('WARN', `track.mdia存在: ${!!track.mdia}`);
+  addDebugLog('WARN', `description取得失敗 (mdia: ${!!track.mdia})`);
   return undefined;
 }
 
@@ -463,7 +455,7 @@ async function compressWithMediaRecorder(file, videoInfo, targetWidth, targetHei
     const expectedDuration = videoInfo.duration / video.playbackRate;
     const progress = Math.min(elapsed / expectedDuration * 100, 100);
     onProgress?.(progress);
-    if (frameCount % 30 === 0) {
+    if (frameCount % 300 === 0) {
       addDebugLog('STEP', `${elapsed.toFixed(1)}s / ${expectedDuration.toFixed(1)}s expected (${progress.toFixed(0)}%)`);
     }
     requestAnimationFrame(drawFrame);
