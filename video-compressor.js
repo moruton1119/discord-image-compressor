@@ -86,14 +86,15 @@ export async function compressVideo(file, onProgress, onStatus) {
 async function compressWithWebCodecs(file, videoInfo, targetWidth, targetHeight, videoBitrate, onProgress, onStatus) {
   addDebugLog('LOAD', 'WebCodecs エンジン起動...');
 
-  // mp4box.js を動的ロード
+  // mp4box.js を動的ロード（同梱ファイル）
   onStatus?.('MP4パーサーを読み込み中...');
-  await loadScript('https://cdn.jsdelivr.net/npm/mp4box@2.4.1/dist/mp4box.min.js');
-  addDebugLog('LOAD', 'mp4box.js 読み込みOK');
+  const mp4boxModule = await import('./vendor/mp4box.all.mjs');
+  window.MP4Box = mp4boxModule;
+  addDebugLog('LOAD', 'mp4box.js 読み込みOK（同梱）');
 
-  // mp4-muxer を動的ロード
-  await loadScript('https://cdn.jsdelivr.net/npm/mp4-muxer@5.2.2/dist/mp4-muxer.min.js');
-  addDebugLog('LOAD', 'mp4-muxer 読み込みOK');
+  // mp4-muxer を動的ロード（同梱ファイル）
+  await loadScript('./vendor/mp4-muxer.js');
+  addDebugLog('LOAD', 'mp4-muxer 読み込みOK（同梱）');
 
   // Step 1: MP4をデマックス（チャンク抽出）
   onStatus?.('動画を解析中...');
@@ -127,7 +128,9 @@ async function compressWithWebCodecs(file, videoInfo, targetWidth, targetHeight,
   addDebugLog('INFO', `エンコーダ設定: codec=${encoderConfig.codec}, ${targetWidth}x${targetHeight}, ${(videoBitrate / 1000).toFixed(0)}kbps`);
 
   // Step 4: Muxer設定（mp4-muxer）
-  const { Muxer, ArrayBufferTarget } = window.mp4Muxer;
+  // mp4-muxer.js は var Mp4Muxer でグローバルに展開される
+  const muxerLib = window.Mp4Muxer || Mp4Muxer;
+  const { Muxer, ArrayBufferTarget } = muxerLib;
   const muxerTarget = new ArrayBufferTarget();
   const muxer = new Muxer({
     target: muxerTarget,
