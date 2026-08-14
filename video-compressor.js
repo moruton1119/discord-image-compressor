@@ -314,7 +314,19 @@ async function demuxMP4(file) {
     };
 
     mp4box.onSamples = (trackId, ref, samples) => {
+      let firstKeyFound = chunks.length > 0; // 既に最初のキーフレーム取得済みか
+
       for (const sample of samples) {
+        // 最初のキーフレームが来るまでスキップ（デコーダ初期化に必要）
+        if (!firstKeyFound) {
+          if (!sample.is_sync) {
+            addDebugLog('LOAD', '最初のキーフレームを待機中...');
+            continue;
+          }
+          firstKeyFound = true;
+          addDebugLog('LOAD', '最初のキーフレーム取得');
+        }
+
         const chunk = new EncodedVideoChunk({
           type: sample.is_sync ? 'key' : 'delta',
           timestamp: sample.cts * 1000000 / sample.timescale,
@@ -345,7 +357,7 @@ async function demuxMP4(file) {
   });
 }
 
-// H.264のdecoder description（SPS/PPS）を取得
+// decoder description（SPS/PPS）を取得 — H.264(avcC) と H.265(hvcC) 両対応
 function getDecoderDescription(track) {
   if (!track.mdia || !track.mdia.minf || !track.mdia.minf.stbl || !track.mdia.minf.stbl.stsd) {
     return undefined;
@@ -353,18 +365,20 @@ function getDecoderDescription(track) {
   const stsd = track.mdia.minf.stbl.stsd;
   if (stsd.entries && stsd.entries.length > 0) {
     const entry = stsd.entries[0];
-    // avcC ボックスからdescriptionを取得
+
+    // H.264 (avcC)
     if (entry.avcC) {
-      const stream = new window.MP4Box.DataStream(
-        entry.avcC.data,
-        0,
-        window.MP4Box.DataStream.BIG_ENDIAN
-      );
-      const avcC = window.MP4Box.BoxParser.avcCBox.parse(stream);
-      const description = new Uint8Array(entry.avcC.data);
-      return description;
+      addDebugLog('LOAD', 'avcC description取得（H.264）');
+      return new Uint8Array(entry.avcC.data);
+    }
+
+    // H.265 / HEVC (hvcC)
+    if (entry.hvcC) {
+      addDebugLog('LOAD', 'hvcC description取得（H.265/HEVC）');
+      return new Uint8Array(entry.hvcC.data);
     }
   }
+  addDebugLog('WARN', 'avcC/hvcC boxが見つかりません');
   return undefined;
 }
 
