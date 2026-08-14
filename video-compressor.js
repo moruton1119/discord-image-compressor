@@ -8,6 +8,8 @@
 
 const TARGET_SIZE_MB = 10;
 const TARGET_SIZE_BYTES = TARGET_SIZE_MB * 1024 * 1024;
+// 完了判定は9MB（余裕を持たせる）
+const ACCEPT_SIZE_BYTES = 9 * 1024 * 1024;
 
 // ============ デバッグログ ============
 function addDebugLog(level, message) {
@@ -49,9 +51,15 @@ export async function compressVideo(file, onProgress, onStatus) {
   addDebugLog('INFO', `動画の長さ: ${videoInfo.duration.toFixed(1)}秒`);
   addDebugLog('INFO', `フレームレート: ${videoInfo.fps}`);
 
-  // 目標ビットレート計算
+  // 元ファイルが既に10MB以下ならそのまま返す
+  if (file.size <= TARGET_SIZE_BYTES) {
+    addDebugLog('INFO', `元ファイルが${(file.size / 1024 / 1024).toFixed(2)}MB — 10MB以下のため圧縮不要`);
+    return { blob: file, originalSize: file.size, compressedSize: file.size };
+  }
+
+  // 目標ビットレート計算（9MB基準で余裕を持たせる）
   const audioBitrate = 64000;
-  const targetTotalBitrate = Math.floor((TARGET_SIZE_BYTES * 8) / videoInfo.duration);
+  const targetTotalBitrate = Math.floor((ACCEPT_SIZE_BYTES * 8) / videoInfo.duration);
   const targetVideoBitrate = Math.max(100000, targetTotalBitrate - audioBitrate);
   addDebugLog('INFO', `目標ビットレート: video=${(targetVideoBitrate / 1000).toFixed(0)}kbps`);
 
@@ -220,7 +228,7 @@ async function compressWithWebCodecs(file, videoInfo, targetWidth, targetHeight,
               addDebugLog('INFO', `WebCodecs圧縮完了: ${(file.size / 1024 / 1024).toFixed(2)}MB → ${(blob.size / 1024 / 1024).toFixed(2)}MB`);
 
               if (blob.size > TARGET_SIZE_BYTES) {
-                addDebugLog('WARN', `サイズ超過 (${(blob.size / 1024 / 1024).toFixed(2)}MB)。ビットレートを下げて再圧縮...`);
+                addDebugLog('WARN', `サイズ超過 (${(blob.size / 1024 / 1024).toFixed(2)}MB > 10MB)。ビットレートを下げて再圧縮...`);
                 const lowerBitrate = Math.floor(videoBitrate * 0.5);
                 const smallerWidth = Math.max(320, Math.round(targetWidth * 0.75 / 2) * 2);
                 const smallerHeight = Math.max(240, Math.round(targetHeight * 0.75 / 2) * 2);
@@ -452,7 +460,7 @@ async function compressWithMediaRecorder(file, videoInfo, targetWidth, targetHei
   addDebugLog('INFO', `MediaRecorder圧縮完了: ${(file.size / 1024 / 1024).toFixed(2)}MB → ${(blob.size / 1024 / 1024).toFixed(2)}MB`);
 
   if (blob.size > TARGET_SIZE_BYTES) {
-    addDebugLog('WARN', `サイズ超過。再圧縮...`);
+    addDebugLog('WARN', `サイズ超過 (${(blob.size / 1024 / 1024).toFixed(2)}MB > 10MB)。再圧縮...`);
     const lowerBitrate = Math.floor(videoBitrate * 0.5);
     const smallerWidth = Math.max(320, Math.round(targetWidth * 0.75 / 2) * 2);
     const smallerHeight = Math.max(240, Math.round(targetHeight * 0.75 / 2) * 2);

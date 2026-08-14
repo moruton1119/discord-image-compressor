@@ -100,6 +100,11 @@ async function handleImages(files) {
 }
 
 async function compressImageWasm(file) {
+  // 元ファイルが既に10MB以下ならそのまま返す
+  if (file.size <= TARGET_SIZE_BYTES) {
+    return { blob: file, isLossless: true };
+  }
+
   const data = new Uint8Array(await file.arrayBuffer());
   const format = formatSelect.value;
   const info = compressor.get_image_info(data);
