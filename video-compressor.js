@@ -127,8 +127,7 @@ async function compressWithWebCodecs(file, videoInfo, targetWidth, targetHeight,
     height: targetHeight,
     bitrate: videoBitrate,
     framerate: videoInfo.fps,
-    bitrateMode: 'variable',  // VBRで効率的に
-    latencyMode: 'quality',  // 品質優先
+    bitrateMode: 'constant',  // CBRでサイズを確実に制御
   };
   const encSupported = await VideoEncoder.isConfigSupported(encoderConfig);
   if (!encSupported.supported) {
