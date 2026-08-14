@@ -301,9 +301,9 @@ async function demuxMP4(file) {
         nbSamples: 100,
       });
 
-      // description取得（onReady時点で取得を試みる）
+      // description取得（onReadyでは取得できない場合が多い）
       const description = getDecoderDescription(videoTrack);
-      addDebugLog('LOAD', `description取得結果: ${description ? `${description.length}bytes` : 'null'}`);
+      addDebugLog('LOAD', `description取得結果(onReady): ${description ? `${description.length}bytes` : 'null — onSamplesで再取得'}`);
       decoderConfig = {
         codec: videoTrack.codec,
         codedWidth: videoTrack.track_width,
@@ -313,11 +313,31 @@ async function demuxMP4(file) {
         decoderConfig.description = description;
       }
 
+      // デコーダはonSamplesでdescription取得後に設定
       mp4box.start();
     };
 
     mp4box.onSamples = (trackId, ref, samples) => {
-      let firstKeyFound = chunks.length > 0; // 既に最初のキーフレーム取得済みか
+      let firstKeyFound = chunks.length > 0;
+
+      // 最初のサンプルからdescriptionを取得（onReady時点では取得できない）
+      if (!decoderConfig.description && samples.length > 0) {
+        const sample = samples[0];
+        if (sample.description) {
+          // sample.description.data に avcC/hvcC の生データが入ってる
+          if (sample.description.avcC) {
+            decoderConfig.description = new Uint8Array(sample.description.avcC.data);
+            addDebugLog('LOAD', 'description: avcC (H.264) — sampleから取得');
+          } else if (sample.description.hvcC) {
+            decoderConfig.description = new Uint8Array(sample.description.hvcC.data);
+            addDebugLog('LOAD', 'description: hvcC (H.265) — sampleから取得');
+          } else {
+            // description内の生データを探す
+            const descKeys = Object.keys(sample.description);
+            addDebugLog('WARN', `description keys: ${descKeys.join(', ')}`);
+          }
+        }
+      }
 
       for (const sample of samples) {
         // 最初のキーフレームが来るまでスキップ（デコーダ初期化に必要）
@@ -342,6 +362,10 @@ async function demuxMP4(file) {
       // 全サンプル抽出完了チェック
       if (samples.length === 0 || chunks.length >= videoTrack.nb_samples) {
         mp4box.stop();
+        // 最終チェック: descriptionがまだ無い場合は警告
+        if (!decoderConfig.description && videoTrack.codec.startsWith('hvc1')) {
+          addDebugLog('WARN', 'HEVCだがdescription未取得 — デコード失敗の可能性');
+        }
         resolve({ chunks, decoderConfig, videoTrack });
       }
     };
