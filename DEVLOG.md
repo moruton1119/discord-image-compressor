@@ -188,6 +188,70 @@ ffmpeg.wasmのすべての問題（SAB、Worker、メモリ、速度）を一括
 
 ---
 
+## Phase 3: WebCodecs エンジン（✅ 完成・2026-08-14）
+
+ffmpeg.wasm → MediaRecorder → **WebCodecs**への進化。ブラウザのハードウェアコーデックを直接制御する最終形態。
+
+| 日付 | コミット | 内容 |
+|------|---------|------|
+| 2026-08-13 | `66b5aba` | 🚀 WebCodecs エンジン実装（mp4box.js + mp4-muxer） |
+| 2026-08-13 | `f5b8237` | 📦 同梱化完了！CDN依存を完全排除 |
+| 2026-08-14 | `fc0f782` | 🎯 10MB以下は圧縮スキップ・目標9MB |
+| 2026-08-14 | `5e545d3` | 🔇 MediaRecorder: 無音+最大4倍速 |
+| 2026-08-14 | `2d24301` | 🐛 HEVC(H.265)のWebCodecsデコード対応 |
+| 2026-08-14 | `8361390` | 🔇 処理中ログを最小化 |
+| 2026-08-14 | `5e9674c` | 🐛 onSamplesからHEVC description取得 |
+| 2026-08-14 | `5a66e07` | 🐛 **W3C公式方法でdescription取得 — HEVC完全対応** |
+| 2026-08-14 | `2e9d712` | ⚡ 2回圧縮防止（8MB目標に変更） |
+| 2026-08-14 | `b4f2f53` | 🎨 プログレスバーを全フェーズにマッピング |
+| 2026-08-14 | `faa829f` | 🐛 VBR→CBR（サイズ超過の根本解決） |
+| 2026-08-14 | `6df1bfa` | ✨ パーセンテージ表示追加 |
+
+### 🐛 8. HEVC description取得エラー（最大の難所）
+
+**エラー:** `A key frame is required after configure() or flush(). If you're using HEVC formatted H.265 you must fill out the description field in the VideoDecoderConfig.`
+
+**試行錯誤:**
+1. `onReady` のtrack infoから `track.mdia.minf.stbl.stsd` で取得 → **mdiaが存在しない**
+2. `onSamples` の `sample.description` から取得 → descriptionは取れるがデコード失敗
+3. **W3C公式サンプルを発見** → 正解は3点セット
+
+**正解（W3C公式 samples/video-decode-display/demuxer_mp4.js）:**
+```js
+// ① file.getTrackById() で内部trackを取得（onReadyのinfoではない！）
+const trak = file.getTrackById(track.id);
+// ② box.write() でシリアライズ（box.dataをそのまま使わない！）
+for (const entry of trak.mdia.minf.stbl.stsd.entries) {
+  const box = entry.avcC || entry.hvcC || entry.vpcC || entry.av1C;
+  if (box) {
+    const stream = new DataStream(undefined, 0, DataStream.BIG_ENDIAN);
+    box.write(stream);
+    // ③ 先頭8バイト（ボックスヘッダー）を削除
+    return new Uint8Array(stream.buffer, 8);
+  }
+}
+```
+
+### 🐛 9. VBRでサイズ超過（2回圧縮発生）
+
+**現象:** 834kbps指定なのに17.41MB出力（目標10MB）→ 再圧縮で時間2倍
+
+**原因:** `bitrateMode: 'variable'` はビットレートを目安として扱い、複雑なシーンで大幅超過
+
+**解決:** `bitrateMode: 'constant'`（CBR）に戻す + 目標を8MBに。1回のエンコードで確実に制限内。
+
+---
+
+## 🏆 最終成果（実測値）
+
+| テスト動画 | 元サイズ | 結果 | 処理時間 | デバイス |
+|-----------|---------|------|---------|----------|
+| 1362.mp4 (4K HEVC, 132秒) | **679.77MB** | **6.94MB** | 75秒 | Android スマホ |
+| 忍者ギミックPV0814.mp4 (1080p, 84秒) | 393.12MB | 9.61MB | 40秒 | Windows PC |
+| 1435.mp4 (4K HEVC, 76秒) | 395.05MB | 6.94MB | 75秒 | Android スマホ |
+
+---
+
 ## 現在の技術構成
 
 ### 画像圧縮
@@ -197,25 +261,45 @@ ffmpeg.wasmのすべての問題（SAB、Worker、メモリ、速度）を一括
 - EXIF/メタデータ全削除
 
 ### 動画圧縮
-- 🎬 **Canvas + MediaRecorder API**（ブラウザネイティブ）
-- ハードウェアエンコード
-- 自動ビットレート計算 + 解像度ダウンスケール
-- サイズ超過時の自動再圧縮
+- 🎬 **WebCodecs API**（メインエンジン）
+  - mp4box.jsでMP4デマックス（同梱）
+  - VideoDecoderでハードウェアデコード（HEVC/H.264対応）
+  - Canvas経由でリサイズ
+  - VideoEncoderでハードウェアH.264エンコード（CBR）
+  - mp4-muxerでMP4格納（同梱）
+- 🎥 **Canvas + MediaRecorder**（フォールバック）
+  - WebCodecs非対応環境向け自動切替
+  - 2〜4倍速再生で処理短縮
+- 自動ビットレート計算（目標8MB・安全マージン）
+- 10MB以下のファイルは圧縮スキップ（品質保持）
 
 ### インフラ
 - 📦 **GitHub Pages**（無料ホスティング）
-- 🔄 GitHub Actions で自動デプロイ
-- 依存ライブラリゼロ（バニラJS）
+- 🔄 GitHub Actions で自動デプロイ（約20秒）
+- 依存ライブラリゼロ（CDN不使用・全て同梱）
 
 ---
 
 ## 教訓・知見
 
+### 動画圧縮エンジンの選択基準（3世代の結論）
+
+| エンジン | 追加DL | 速度 | メモリ | SAB要否 | 結論 |
+|---------|--------|------|--------|---------|------|
+| ffmpeg.wasm | 約30MB | 遅い（SW） | ×3倍（危険） | 必要 | ❌ 廃止 |
+| MediaRecorder | 0 | 実時間の1/2〜1/4 | 安全 | 不要 | ⭕ フォールバック |
+| **WebCodecs** | **0** | **爆速（HW）** | **安全** | **不要** | ✅ **最適解** |
+
 ### ffmpeg.wasmを使うべきでないケース
 1. **GitHub Pages等の静的ホスティング** — COOP/COEPヘッダーが設定不可
 2. **大容量ファイル（100MB超）** — メモリ不足でクラッシュ
 3. **モバイル対応** — 30MBのcoreダウンロードが重い、シングルスレッドで遅い
-4. **シンプルな圧縮のみが必要** — MediaRecorder APIで十分な場合が多い
+4. **シンプルな圧縮のみが必要** — WebCodecs/MediaRecorder APIで十分な場合が多い
+
+### WebCodecs実装のバイブル
+- **W3C公式サンプル**（samples/video-decode-display/demuxer_mp4.js）が事実上唯一の信頼できる参考資料
+- HEVCのdescription取得は「getTrackById → box.write → 8バイト削除」の3点セット
+- `VideoDecoder.isConfigSupported()` で事前チェックすればフォールバック制御が可能
 
 ### wasm-pack `--target web` の罠
 - `init` 関数は `default` export になる（名前付きexportではない）
@@ -235,7 +319,7 @@ ffmpeg.wasmのすべての問題（SAB、Worker、メモリ、速度）を一括
 
 ## 今後の展望
 
-- [ ] WebCodecs API対応（更なる高速化・エンコード品質向上）
+- [ ] 音声トラック処理の本格対応（現在は映像のみ）
 - [ ] WebM → MP4 変換オプション
 - [ ] 圧縮プリセット（高速/高品質）
 - [ ] PWA対応（オフライン動作）
