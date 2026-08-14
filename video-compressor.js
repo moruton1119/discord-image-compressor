@@ -57,9 +57,9 @@ export async function compressVideo(file, onProgress, onStatus) {
     return { blob: file, originalSize: file.size, compressedSize: file.size };
   }
 
-  // 目標ビットレート計算（9MB基準で余裕を持たせる）
+  // 目標ビットレート計算（8MB基準で安全マージン）
   const audioBitrate = 64000;
-  const targetTotalBitrate = Math.floor((ACCEPT_SIZE_BYTES * 8) / videoInfo.duration);
+  const targetTotalBitrate = Math.floor((8 * 1024 * 1024 * 8) / videoInfo.duration);
   const targetVideoBitrate = Math.max(100000, targetTotalBitrate - audioBitrate);
   addDebugLog('INFO', `目標ビットレート: video=${(targetVideoBitrate / 1000).toFixed(0)}kbps`);
 
@@ -123,6 +123,8 @@ async function compressWithWebCodecs(file, videoInfo, targetWidth, targetHeight,
     height: targetHeight,
     bitrate: videoBitrate,
     framerate: videoInfo.fps,
+    bitrateMode: 'variable',  // VBRで効率的に
+    latencyMode: 'quality',  // 品質優先
   };
   const encSupported = await VideoEncoder.isConfigSupported(encoderConfig);
   if (!encSupported.supported) {
