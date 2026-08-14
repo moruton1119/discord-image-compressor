@@ -375,7 +375,7 @@ async function compressWithMediaRecorder(file, videoInfo, targetWidth, targetHei
 
   const video = document.createElement('video');
   video.src = URL.createObjectURL(file);
-  video.muted = false;
+  video.muted = true;   // 音を出さない
   video.playsInline = true;
 
   await new Promise((resolve, reject) => {
@@ -392,8 +392,8 @@ async function compressWithMediaRecorder(file, videoInfo, targetWidth, targetHei
   const sourceNode = audioCtx.createMediaElementSource(video);
   const canvasStream = canvas.captureStream(videoInfo.fps);
   const audioDestination = audioCtx.createMediaStreamDestination();
-  sourceNode.connect(audioDestination);
-  sourceNode.connect(audioCtx.destination);
+  sourceNode.connect(audioDestination);  // 録画用のみに接続
+  // audioCtx.destination には繋がない → 音を出さない
 
   const combinedStream = new MediaStream([
     ...canvasStream.getVideoTracks(),
@@ -427,7 +427,10 @@ async function compressWithMediaRecorder(file, videoInfo, targetWidth, targetHei
   recorder.start(100);
 
   video.currentTime = 0;
+  // 再生速度を上げて処理時間を短縮（音は出ないから問題なし）
+  video.playbackRate = Math.min(4, videoInfo.duration > 60 ? 4 : 2);
   await video.play();
+  addDebugLog('STEP', `録画開始（${video.playbackRate}倍速）`);
 
   const startTime = performance.now();
   let frameCount = 0;
@@ -437,10 +440,11 @@ async function compressWithMediaRecorder(file, videoInfo, targetWidth, targetHei
     ctx.drawImage(video, 0, 0, targetWidth, targetHeight);
     frameCount++;
     const elapsed = (performance.now() - startTime) / 1000;
-    const progress = Math.min(elapsed / videoInfo.duration * 100, 100);
+    const expectedDuration = videoInfo.duration / video.playbackRate;
+    const progress = Math.min(elapsed / expectedDuration * 100, 100);
     onProgress?.(progress);
     if (frameCount % 30 === 0) {
-      addDebugLog('STEP', `${elapsed.toFixed(1)}s / ${videoInfo.duration.toFixed(1)}s (${progress.toFixed(0)}%)`);
+      addDebugLog('STEP', `${elapsed.toFixed(1)}s / ${expectedDuration.toFixed(1)}s expected (${progress.toFixed(0)}%)`);
     }
     requestAnimationFrame(drawFrame);
   }
