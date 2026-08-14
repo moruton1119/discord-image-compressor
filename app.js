@@ -267,6 +267,10 @@ function addVideoResult(file, result) {
 // ============================================================
 function updateProgress(percent) {
   progressFill.style.width = `${Math.min(percent, 100)}%`;
+  const percentElement = document.getElementById('progressPercent');
+  if (percentElement) {
+    percentElement.textContent = `${Math.round(percent)}%`;
+  }
 }
 
 function finishProcessing() {
