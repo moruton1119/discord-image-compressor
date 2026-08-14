@@ -94,20 +94,24 @@ export async function compressVideo(file, onProgress, onStatus) {
 async function compressWithWebCodecs(file, videoInfo, targetWidth, targetHeight, videoBitrate, onProgress, onStatus) {
   addDebugLog('LOAD', 'WebCodecs エンジン起動...');
 
-  // mp4box.js を動的ロード（同梱ファイル）
+  // Phase 1: ライブラリ読み込み (0〜5%)
   onStatus?.('MP4パーサーを読み込み中...');
+  onProgress?.(2);
   const mp4boxModule = await import('./vendor/mp4box.all.mjs');
   window.MP4Box = mp4boxModule;
   addDebugLog('LOAD', 'mp4box.js 読み込みOK（同梱）');
+  onProgress?.(4);
 
-  // mp4-muxer を動的ロード（同梱ファイル）
   await loadScript('./vendor/mp4-muxer.js');
   addDebugLog('LOAD', 'mp4-muxer 読み込みOK（同梱）');
+  onProgress?.(5);
 
-  // Step 1: MP4をデマックス（チャンク抽出）
+  // Phase 2: MP4デマックス (5〜15%)
   onStatus?.('動画を解析中...');
+  onProgress?.(8);
   const { chunks, decoderConfig, videoTrack } = await demuxMP4(file);
   addDebugLog('INFO', `デマックス完了: ${chunks.length}チャンク, codec=${decoderConfig.codec}`);
+  onProgress?.(15);
 
   // Step 2: デコーダ設定
   const supported = await VideoDecoder.isConfigSupported(decoderConfig);
@@ -136,6 +140,7 @@ async function compressWithWebCodecs(file, videoInfo, targetWidth, targetHeight,
     }
   }
   addDebugLog('INFO', `エンコーダ設定: codec=${encoderConfig.codec}, ${targetWidth}x${targetHeight}, ${(videoBitrate / 1000).toFixed(0)}kbps`);
+  onProgress?.(18);
 
   // Step 4: Muxer設定（mp4-muxer）
   // mp4-muxer.js は var Mp4Muxer でグローバルに展開される
@@ -154,7 +159,8 @@ async function compressWithWebCodecs(file, videoInfo, targetWidth, targetHeight,
   });
 
   // Step 5: デコード → リサイズ → エンコード パイプライン
-  onStatus?.('圧縮中... (WebCodecs)');
+  onStatus?.('圧縮中...');
+  onProgress?.(20);
 
   // Canvas for resizing
   const canvas = document.createElement('canvas');
@@ -211,9 +217,12 @@ async function compressWithWebCodecs(file, videoInfo, targetWidth, targetHeight,
         decodedCount++;
         pendingDecodes--;
 
+        // フレーム処理の進捗: 20%〜90%をマッピング
+        const frameProgress = 20 + (decodedCount / totalChunks * 70);
+        onProgress?.(frameProgress);
+
         if (decodedCount === totalChunks) {
-          const pct = 100;
-          onProgress?.(pct);
+          onProgress?.(90);
           addDebugLog('STEP', `全${totalChunks}フレーム処理完了`);
         }
 
@@ -221,13 +230,17 @@ async function compressWithWebCodecs(file, videoInfo, targetWidth, targetHeight,
         if (allChunksSubmitted && pendingDecodes === 0) {
           if (!encoderFinished) {
             encoderFinished = true;
+            onProgress?.(93);
             encoder.flush().then(() => {
               encoder.close();
               decoder.close();
+              onProgress?.(96);
               muxer.finalize();
+              onProgress?.(99);
 
               const blob = new Blob([muxerTarget.buffer], { type: 'video/mp4' });
               addDebugLog('INFO', `WebCodecs圧縮完了: ${(file.size / 1024 / 1024).toFixed(2)}MB → ${(blob.size / 1024 / 1024).toFixed(2)}MB`);
+              onProgress?.(100);
 
               if (blob.size > TARGET_SIZE_BYTES) {
                 addDebugLog('WARN', `サイズ超過 (${(blob.size / 1024 / 1024).toFixed(2)}MB > 10MB)。ビットレートを下げて再圧縮...`);
@@ -442,6 +455,7 @@ async function compressWithMediaRecorder(file, videoInfo, targetWidth, targetHei
   recorder.ondataavailable = (e) => { if (e.data.size > 0) chunks.push(e.data); };
 
   onStatus?.('圧縮中... (MediaRecorder)');
+  onProgress?.(15);
   recorder.start(100);
 
   video.currentTime = 0;
@@ -459,7 +473,8 @@ async function compressWithMediaRecorder(file, videoInfo, targetWidth, targetHei
     frameCount++;
     const elapsed = (performance.now() - startTime) / 1000;
     const expectedDuration = videoInfo.duration / video.playbackRate;
-    const progress = Math.min(elapsed / expectedDuration * 100, 100);
+    // 15%〜95%をマッピング
+    const progress = 15 + Math.min(elapsed / expectedDuration, 1) * 80;
     onProgress?.(progress);
     if (frameCount % 300 === 0) {
       addDebugLog('STEP', `${elapsed.toFixed(1)}s / ${expectedDuration.toFixed(1)}s expected (${progress.toFixed(0)}%)`);
@@ -479,6 +494,7 @@ async function compressWithMediaRecorder(file, videoInfo, targetWidth, targetHei
   audioCtx.close();
 
   const blob = new Blob(chunks, { type: mimeType });
+  onProgress?.(100);
   addDebugLog('INFO', `MediaRecorder圧縮完了: ${(file.size / 1024 / 1024).toFixed(2)}MB → ${(blob.size / 1024 / 1024).toFixed(2)}MB`);
 
   if (blob.size > TARGET_SIZE_BYTES) {
