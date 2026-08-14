@@ -383,8 +383,8 @@ function logBrowserInfo() {
   const lines = [];
   lines.push(`UA: ${navigator.userAgent}`);
   lines.push(`Platform: ${navigator.platform}`);
-  lines.push(`SharedArrayBuffer: ${typeof SharedArrayBuffer !== 'undefined' ? '✅ 利用可能' : '❌ 利用不可'}`);
-  lines.push(`crossOriginIsolated: ${self.crossOriginIsolated}`);
+  // SharedArrayBuffer のチェックログは不要なので削除
+  // crossOriginIsolated のチェックログは不要なので削除
   lines.push(`WebAssembly: ${typeof WebAssembly !== 'undefined' ? '✅' : '❌'}`);
   lines.push(`Device Memory: ${navigator.deviceMemory || 'unknown'} GB`);
   lines.push(`Hardware Concurrency: ${navigator.hardwareConcurrency || 'unknown'} cores`);
