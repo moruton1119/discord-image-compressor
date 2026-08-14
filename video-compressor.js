@@ -2,11 +2,8 @@
  * Discord 画像/動画 圧縮くん - 動画圧縮モジュール
  * 
  * 2つのエンジンを使い分け:
- * 1. WebCodecs API（高速・ハードウェアアクセラレーション・推奨）
+ * 1. WebCodecs API（爆速・ハードウェアアクセラレーション・推奨）
  * 2. Canvas + MediaRecorder（フォールバック・全環境対応）
- * 
- * どちらも追加ライブラリ不要・ブラウザネイティブ動作
- * ffmpeg.wasm は完全に廃止（メモリ問題・SAB問題・速度問題のすべてを解決）
  */
 
 const TARGET_SIZE_MB = 10;
@@ -29,7 +26,7 @@ function addDebugLog(level, message) {
 
 // ============ エンジン選択 ============
 function getEngine() {
-  if (typeof VideoEncoder !== 'undefined' && typeof VideoFrame !== 'undefined') {
+  if (typeof VideoEncoder !== 'undefined' && typeof VideoDecoder !== 'undefined') {
     return 'webcodecs';
   }
   return 'mediarecorder';
@@ -42,23 +39,23 @@ export async function compressVideo(file, onProgress, onStatus) {
   addDebugLog('INFO', `ファイルサイズ: ${(file.size / 1024 / 1024).toFixed(2)} MB`);
   addDebugLog('INFO', `MIME Type: ${file.type}`);
 
-  // 動画のメタデータ取得
+  const engine = getEngine();
+  addDebugLog('INFO', `エンジン: ${engine}`);
+
+  // 動画メタデータ取得
   onStatus?.('動画情報を解析中...');
   const videoInfo = await getVideoInfo(file);
   addDebugLog('INFO', `解像度: ${videoInfo.width}x${videoInfo.height}`);
   addDebugLog('INFO', `動画の長さ: ${videoInfo.duration.toFixed(1)}秒`);
   addDebugLog('INFO', `フレームレート: ${videoInfo.fps}`);
 
-  const engine = getEngine();
-  addDebugLog('INFO', `エンジン: ${engine}`);
-
   // 目標ビットレート計算
-  const audioBitrate = 64000; // 64kbps
+  const audioBitrate = 64000;
   const targetTotalBitrate = Math.floor((TARGET_SIZE_BYTES * 8) / videoInfo.duration);
-  const targetVideoBitrate = Math.max(100000, targetTotalBitrate - audioBitrate); // 最低100kbps
-  addDebugLog('INFO', `目標ビットレート: video=${(targetVideoBitrate / 1000).toFixed(0)}kbps, audio=${(audioBitrate / 1000).toFixed(0)}kbps`);
+  const targetVideoBitrate = Math.max(100000, targetTotalBitrate - audioBitrate);
+  addDebugLog('INFO', `目標ビットレート: video=${(targetVideoBitrate / 1000).toFixed(0)}kbps`);
 
-  // 解像度スケール（元が大きい場合は下げる）
+  // 解像度スケール
   const maxResolution = 1280;
   let targetWidth = videoInfo.width;
   let targetHeight = videoInfo.height;
@@ -70,20 +67,301 @@ export async function compressVideo(file, onProgress, onStatus) {
   }
 
   if (engine === 'webcodecs') {
-    return await compressWithMediaRecorder(file, videoInfo, targetWidth, targetHeight, targetVideoBitrate, audioBitrate, onProgress, onStatus);
+    try {
+      return await compressWithWebCodecs(file, videoInfo, targetWidth, targetHeight, targetVideoBitrate, onProgress, onStatus);
+    } catch (err) {
+      addDebugLog('WARN', `WebCodecs失敗、MediaRecorderにフォールバック: ${err.message}`);
+      // フォールバック
+      return await compressWithMediaRecorder(file, videoInfo, targetWidth, targetHeight, targetVideoBitrate, audioBitrate, onProgress, onStatus);
+    }
   } else {
     return await compressWithMediaRecorder(file, videoInfo, targetWidth, targetHeight, targetVideoBitrate, audioBitrate, onProgress, onStatus);
   }
 }
 
-// ============ MediaRecorder エンジン ============
-// Canvas に動画を描画しながら MediaRecorder で録画する
-// ハードウェアエンコード・低メモリ・高速
+// ============================================================
+//  WebCodecs エンジン（爆速・ハードウェア）
+// ============================================================
+
+async function compressWithWebCodecs(file, videoInfo, targetWidth, targetHeight, videoBitrate, onProgress, onStatus) {
+  addDebugLog('LOAD', 'WebCodecs エンジン起動...');
+
+  // mp4box.js を動的ロード
+  onStatus?.('MP4パーサーを読み込み中...');
+  await loadScript('https://cdn.jsdelivr.net/npm/mp4box@2.4.1/dist/mp4box.min.js');
+  addDebugLog('LOAD', 'mp4box.js 読み込みOK');
+
+  // mp4-muxer を動的ロード
+  await loadScript('https://cdn.jsdelivr.net/npm/mp4-muxer@5.2.2/dist/mp4-muxer.min.js');
+  addDebugLog('LOAD', 'mp4-muxer 読み込みOK');
+
+  // Step 1: MP4をデマックス（チャンク抽出）
+  onStatus?.('動画を解析中...');
+  const { chunks, decoderConfig, videoTrack } = await demuxMP4(file);
+  addDebugLog('INFO', `デマックス完了: ${chunks.length}チャンク, codec=${decoderConfig.codec}`);
+
+  // Step 2: デコーダ設定
+  const supported = await VideoDecoder.isConfigSupported(decoderConfig);
+  if (!supported.supported) {
+    throw new Error(`デコーダ非対応: ${decoderConfig.codec}`);
+  }
+
+  // Step 3: エンコーダ設定
+  const encoderCodec = 'avc1.640028'; // H.264 High Profile Level 4.0
+  const encoderConfig = {
+    codec: encoderCodec,
+    width: targetWidth,
+    height: targetHeight,
+    bitrate: videoBitrate,
+    framerate: videoInfo.fps,
+  };
+  const encSupported = await VideoEncoder.isConfigSupported(encoderConfig);
+  if (!encSupported.supported) {
+    // 別のプロファイルを試す
+    encoderConfig.codec = 'avc1.42001f'; // Baseline Level 3.1
+    const encSupported2 = await VideoEncoder.isConfigSupported(encoderConfig);
+    if (!encSupported2.supported) {
+      throw new Error('H.264エンコーダ非対応');
+    }
+  }
+  addDebugLog('INFO', `エンコーダ設定: codec=${encoderConfig.codec}, ${targetWidth}x${targetHeight}, ${(videoBitrate / 1000).toFixed(0)}kbps`);
+
+  // Step 4: Muxer設定（mp4-muxer）
+  const { Muxer, ArrayBufferTarget } = window.mp4Muxer;
+  const muxerTarget = new ArrayBufferTarget();
+  const muxer = new Muxer({
+    target: muxerTarget,
+    video: {
+      codec: 'avc',
+      width: targetWidth,
+      height: targetHeight,
+    },
+    fastStart: 'in-memory',
+    firstTimestampBehavior: 'offset',
+  });
+
+  // Step 5: デコード → リサイズ → エンコード パイプライン
+  onStatus?.('圧縮中... (WebCodecs)');
+
+  // Canvas for resizing
+  const canvas = document.createElement('canvas');
+  canvas.width = targetWidth;
+  canvas.height = targetHeight;
+  const ctx = canvas.getContext('2d', { alpha: false });
+
+  let encodedChunks = [];
+  let frameIndex = 0;
+  let decodedCount = 0;
+  const totalChunks = chunks.length;
+
+  return new Promise((resolve, reject) => {
+    let decoder = null;
+    let encoder = null;
+    let pendingDecodes = 0;
+    let allChunksSubmitted = false;
+    let decodedFrameIndices = [];
+    let encoderFinished = false;
+
+    // エンコーダ
+    encoder = new VideoEncoder({
+      output: (chunk, meta) => {
+        muxer.addVideoChunk(chunk, meta);
+        encodedChunks.push(chunk);
+      },
+      error: (e) => {
+        addDebugLog('ERROR', `エンコードエラー: ${e.message}`);
+        reject(e);
+      },
+    });
+    encoder.configure(encoderConfig);
+
+    // デコーダ
+    decoder = new VideoDecoder({
+      output: (frame) => {
+        const idx = decodedFrameIndices.shift();
+
+        // Canvas経由でリサイズ
+        if (targetWidth !== videoInfo.width || targetHeight !== videoInfo.height) {
+          ctx.drawImage(frame, 0, 0, targetWidth, targetHeight);
+          frame.close();
+          const resizedFrame = new VideoFrame(canvas, {
+            timestamp: frame.timestamp,
+            duration: frame.duration,
+          });
+          encoder.encode(resizedFrame, { keyFrame: idx % 60 === 0 });
+          resizedFrame.close();
+        } else {
+          encoder.encode(frame, { keyFrame: idx % 60 === 0 });
+          frame.close();
+        }
+
+        decodedCount++;
+        pendingDecodes--;
+
+        if (decodedCount % 30 === 0 || decodedCount === totalChunks) {
+          const pct = (decodedCount / totalChunks * 100);
+          onProgress?.(pct);
+          addDebugLog('STEP', `${decodedCount}/${totalChunks} フレーム処理 (${pct.toFixed(0)}%)`);
+        }
+
+        // すべてのチャンクを処理し終えたらエンコーダをフラッシュ
+        if (allChunksSubmitted && pendingDecodes === 0) {
+          if (!encoderFinished) {
+            encoderFinished = true;
+            encoder.flush().then(() => {
+              encoder.close();
+              decoder.close();
+              muxer.finalize();
+
+              const blob = new Blob([muxerTarget.buffer], { type: 'video/mp4' });
+              addDebugLog('INFO', `WebCodecs圧縮完了: ${(file.size / 1024 / 1024).toFixed(2)}MB → ${(blob.size / 1024 / 1024).toFixed(2)}MB`);
+
+              if (blob.size > TARGET_SIZE_BYTES) {
+                addDebugLog('WARN', `サイズ超過 (${(blob.size / 1024 / 1024).toFixed(2)}MB)。ビットレートを下げて再圧縮...`);
+                const lowerBitrate = Math.floor(videoBitrate * 0.5);
+                const smallerWidth = Math.max(320, Math.round(targetWidth * 0.75 / 2) * 2);
+                const smallerHeight = Math.max(240, Math.round(targetHeight * 0.75 / 2) * 2);
+                compressWithWebCodecs(file, videoInfo, smallerWidth, smallerHeight, lowerBitrate, onProgress, onStatus)
+                  .then(resolve).catch(reject);
+              } else {
+                resolve({ blob, originalSize: file.size, compressedSize: blob.size });
+              }
+            }).catch(reject);
+          }
+        }
+      },
+      error: (e) => {
+        addDebugLog('ERROR', `デコードエラー: ${e.message}`);
+        reject(e);
+      },
+    });
+    decoder.configure(decoderConfig);
+
+    // チャンクを順次デコード（バックプレッシャー制御）
+    async function feedChunks() {
+      for (let i = 0; i < chunks.length; i++) {
+        // デコーダのキューが溜まりすぎたら待つ
+        while (decoder.decodeQueueSize > 15) {
+          await new Promise(r => setTimeout(r, 5));
+        }
+        // エンコーダのキューもチェック
+        while (encoder.encodeQueueSize > 15) {
+          await new Promise(r => setTimeout(r, 5));
+        }
+
+        decodedFrameIndices.push(i);
+        decoder.decode(chunks[i]);
+        pendingDecodes++;
+      }
+      allChunksSubmitted = true;
+      // デコーダの残りをフラッシュ
+      await decoder.flush();
+    }
+
+    feedChunks().catch(reject);
+  });
+}
+
+// ============ MP4 デマックス（mp4box.js） ============
+
+async function demuxMP4(file) {
+  return new Promise((resolve, reject) => {
+    const mp4box = window.MP4Box.createFile();
+    const chunks = [];
+    let decoderConfig = null;
+    let videoTrack = null;
+    let lastSampleStartTime = 0;
+
+    mp4box.onError = (e) => reject(new Error(`mp4box error: ${e}`));
+
+    mp4box.onReady = (info) => {
+      addDebugLog('LOAD', `MP4情報: ${info.videoTracks?.length || 0}映像トラック, ${info.audioTracks?.length || 0}音声トラック`);
+      
+      if (!info.videoTracks || info.videoTracks.length === 0) {
+        reject(new Error('映像トラックが見つかりません'));
+        return;
+      }
+
+      videoTrack = info.videoTracks[0];
+      addDebugLog('INFO', `映像: ${videoTrack.video.width}x${videoTrack.video.height}, codec=${videoTrack.codec}`);
+
+      // デコーダ設定を準備
+      mp4box.setExtractionOptions(videoTrack.id, null, {
+        nbSamples: 100,
+      });
+
+      // デコーダ設定の取得
+      const description = getDecoderDescription(videoTrack);
+      decoderConfig = {
+        codec: videoTrack.codec,
+        codedWidth: videoTrack.track_width,
+        codedHeight: videoTrack.track_height,
+        description: description,
+      };
+
+      mp4box.start();
+    };
+
+    mp4box.onSamples = (trackId, ref, samples) => {
+      for (const sample of samples) {
+        const chunk = new EncodedVideoChunk({
+          type: sample.is_sync ? 'key' : 'delta',
+          timestamp: sample.cts * 1000000 / sample.timescale,
+          duration: sample.duration * 1000000 / sample.timescale,
+          data: sample.data,
+        });
+        chunks.push(chunk);
+      }
+
+      // 全サンプル抽出完了チェック
+      if (samples.length === 0 || chunks.length >= videoTrack.nb_samples) {
+        mp4box.stop();
+        resolve({ chunks, decoderConfig, videoTrack });
+      }
+    };
+
+    // ファイルを読み込んでmp4boxに渡す
+    const reader = new FileReader();
+    reader.onload = () => {
+      const buffer = reader.result;
+      // ArrayBufferにuser-providedプロパティを設定（mp4box要件）
+      buffer.fileStart = 0;
+      mp4box.appendBuffer(buffer);
+      mp4box.flush();
+    };
+    reader.onerror = () => reject(new Error('ファイル読み込みエラー'));
+    reader.readAsArrayBuffer(file);
+  });
+}
+
+// H.264のdecoder description（SPS/PPS）を取得
+function getDecoderDescription(track) {
+  if (!track.mdia || !track.mdia.minf || !track.mdia.minf.stbl || !track.mdia.minf.stbl.stsd) {
+    return undefined;
+  }
+  const stsd = track.mdia.minf.stbl.stsd;
+  if (stsd.entries && stsd.entries.length > 0) {
+    const entry = stsd.entries[0];
+    // avcC ボックスからdescriptionを取得
+    if (entry.avcC) {
+      const stream = new window.MP4Box.DataStream(
+        entry.avcC.data,
+        0,
+        window.MP4Box.DataStream.BIG_ENDIAN
+      );
+      const avcC = window.MP4Box.BoxParser.avcCBox.parse(stream);
+      const description = new Uint8Array(entry.avcC.data);
+      return description;
+    }
+  }
+  return undefined;
+}
+
+// ============ MediaRecorder エンジン（フォールバック） ============
 
 async function compressWithMediaRecorder(file, videoInfo, targetWidth, targetHeight, videoBitrate, audioBitrate, onProgress, onStatus) {
-  addDebugLog('LOAD', 'MediaRecorder エンジン起動...');
+  addDebugLog('LOAD', 'MediaRecorder エンジン起動（フォールバック）...');
 
-  // video要素の準備
   const video = document.createElement('video');
   video.src = URL.createObjectURL(file);
   video.muted = false;
@@ -91,39 +369,29 @@ async function compressWithMediaRecorder(file, videoInfo, targetWidth, targetHei
 
   await new Promise((resolve, reject) => {
     video.onloadedmetadata = resolve;
-    video.onerror = () => reject(new Error('動画の読み込みに失敗しました'));
+    video.onerror = () => reject(new Error('動画の読み込みに失敗'));
   });
 
-  addDebugLog('STEP', `動画読み込み完了: ${video.videoWidth}x${video.videoHeight}`);
-
-  // Canvasの準備
   const canvas = document.createElement('canvas');
   canvas.width = targetWidth;
   canvas.height = targetHeight;
   const ctx = canvas.getContext('2d', { alpha: false });
 
-  // audio用のコンテキスト
   const audioCtx = new AudioContext();
   const sourceNode = audioCtx.createMediaElementSource(video);
-
-  // MediaStream の準備
   const canvasStream = canvas.captureStream(videoInfo.fps);
   const audioDestination = audioCtx.createMediaStreamDestination();
   sourceNode.connect(audioDestination);
-  sourceNode.connect(audioCtx.destination); // 再生音
+  sourceNode.connect(audioCtx.destination);
 
-  // 映像 + 音声を結合
   const combinedStream = new MediaStream([
     ...canvasStream.getVideoTracks(),
     ...audioDestination.stream.getAudioTracks(),
   ]);
 
-  // サポートされているMIMEタイプを探す
   const mimeTypes = [
     'video/webm;codecs=vp9,opus',
     'video/webm;codecs=vp8,opus',
-    'video/webm;codecs=h264,opus',
-    'video/mp4;codecs=h264,aac',
     'video/webm',
   ];
   let mimeType = '';
@@ -133,12 +401,8 @@ async function compressWithMediaRecorder(file, videoInfo, targetWidth, targetHei
       break;
     }
   }
-  if (!mimeType) {
-    throw new Error('対応する動画エンコーダが見つかりません');
-  }
-  addDebugLog('INFO', `MIME Type: ${mimeType}`);
+  if (!mimeType) throw new Error('対応する動画エンコーダが見つかりません');
 
-  // MediaRecorder 作成
   const recorder = new MediaRecorder(combinedStream, {
     mimeType,
     videoBitsPerSecond: videoBitrate,
@@ -146,76 +410,68 @@ async function compressWithMediaRecorder(file, videoInfo, targetWidth, targetHei
   });
 
   const chunks = [];
-  recorder.ondataavailable = (e) => {
-    if (e.data.size > 0) chunks.push(e.data);
-  };
+  recorder.ondataavailable = (e) => { if (e.data.size > 0) chunks.push(e.data); };
 
-  // 録画開始
-  onStatus?.('圧縮中...');
-  recorder.start(100); // 100ms毎にデータ取得
+  onStatus?.('圧縮中... (MediaRecorder)');
+  recorder.start(100);
 
-  // 動画再生＆Canvas描画
   video.currentTime = 0;
   await video.play();
-  addDebugLog('STEP', '録画開始');
 
   const startTime = performance.now();
   let frameCount = 0;
 
   function drawFrame() {
     if (video.ended || recorder.state === 'inactive') return;
-
     ctx.drawImage(video, 0, 0, targetWidth, targetHeight);
     frameCount++;
-
     const elapsed = (performance.now() - startTime) / 1000;
     const progress = Math.min(elapsed / videoInfo.duration * 100, 100);
     onProgress?.(progress);
-
     if (frameCount % 30 === 0) {
       addDebugLog('STEP', `${elapsed.toFixed(1)}s / ${videoInfo.duration.toFixed(1)}s (${progress.toFixed(0)}%)`);
     }
-
     requestAnimationFrame(drawFrame);
   }
   requestAnimationFrame(drawFrame);
 
-  // 動画終了待機
   await new Promise((resolve) => {
     video.onended = () => {
-      addDebugLog('STEP', '録画終了');
       recorder.stop();
-      // onstop後にresolve
       recorder.onstop = () => resolve();
     };
   });
 
-  // リソース解放
   URL.revokeObjectURL(video.src);
   audioCtx.close();
 
   const blob = new Blob(chunks, { type: mimeType });
-  addDebugLog('INFO', `圧縮完了: ${(file.size / 1024 / 1024).toFixed(2)}MB → ${(blob.size / 1024 / 1024).toFixed(2)}MB`);
+  addDebugLog('INFO', `MediaRecorder圧縮完了: ${(file.size / 1024 / 1024).toFixed(2)}MB → ${(blob.size / 1024 / 1024).toFixed(2)}MB`);
 
-  // サイズチェック
   if (blob.size > TARGET_SIZE_BYTES) {
-    addDebugLog('WARN', `まだ${(blob.size / 1024 / 1024).toFixed(2)}MB。解像度・ビットレートを下げて再圧縮します。`);
-
-    // より低いビットレート・解像度で再トライ
+    addDebugLog('WARN', `サイズ超過。再圧縮...`);
     const lowerBitrate = Math.floor(videoBitrate * 0.5);
-    const smallerWidth = Math.round(targetWidth * 0.75 / 2) * 2;
-    const smallerHeight = Math.round(targetHeight * 0.75 / 2) * 2;
-
-    addDebugLog('STEP', `再圧縮: ${smallerWidth}x${smallerHeight}, ${(lowerBitrate / 1000).toFixed(0)}kbps`);
-    const retryResult = await compressWithMediaRecorder(file, videoInfo, smallerWidth, smallerHeight, lowerBitrate, audioBitrate, onProgress, onStatus);
-    return retryResult;
+    const smallerWidth = Math.max(320, Math.round(targetWidth * 0.75 / 2) * 2);
+    const smallerHeight = Math.max(240, Math.round(targetHeight * 0.75 / 2) * 2);
+    return await compressWithMediaRecorder(file, videoInfo, smallerWidth, smallerHeight, lowerBitrate, audioBitrate, onProgress, onStatus);
   }
 
-  // WebM → MP4変換は省略（Discord は WebM もサポートしてる）
   return { blob, originalSize: file.size, compressedSize: blob.size };
 }
 
 // ============ ヘルパー ============
+
+function loadScript(src) {
+  return new Promise((resolve, reject) => {
+    const existing = document.querySelector(`script[src="${src}"]`);
+    if (existing) { resolve(); return; }
+    const script = document.createElement('script');
+    script.src = src;
+    script.onload = () => resolve();
+    script.onerror = () => reject(new Error(`スクリプト読み込み失敗: ${src}`));
+    document.head.appendChild(script);
+  });
+}
 
 async function getVideoInfo(file) {
   return new Promise((resolve, reject) => {
@@ -223,13 +479,12 @@ async function getVideoInfo(file) {
     video.preload = 'metadata';
     video.onloadedmetadata = () => {
       URL.revokeObjectURL(video.src);
-      const info = {
+      resolve({
         width: video.videoWidth,
         height: video.videoHeight,
         duration: video.duration,
-        fps: 30, // ブラウザでは正確なFPSが取れないのでデフォルト30
-      };
-      resolve(info);
+        fps: 30,
+      });
     };
     video.onerror = () => reject(new Error('動画メタデータの取得に失敗'));
     video.src = URL.createObjectURL(file);
