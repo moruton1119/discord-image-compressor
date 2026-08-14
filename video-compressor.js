@@ -301,14 +301,17 @@ async function demuxMP4(file) {
         nbSamples: 100,
       });
 
-      // デコーダ設定の取得
+      // description取得（onReady時点で取得を試みる）
       const description = getDecoderDescription(videoTrack);
+      addDebugLog('LOAD', `description取得結果: ${description ? `${description.length}bytes` : 'null'}`);
       decoderConfig = {
         codec: videoTrack.codec,
         codedWidth: videoTrack.track_width,
         codedHeight: videoTrack.track_height,
-        description: description,
       };
+      if (description) {
+        decoderConfig.description = description;
+      }
 
       mp4box.start();
     };
@@ -359,26 +362,29 @@ async function demuxMP4(file) {
 
 // decoder description（SPS/PPS）を取得 — H.264(avcC) と H.265(hvcC) 両対応
 function getDecoderDescription(track) {
-  if (!track.mdia || !track.mdia.minf || !track.mdia.minf.stbl || !track.mdia.minf.stbl.stsd) {
-    return undefined;
-  }
-  const stsd = track.mdia.minf.stbl.stsd;
-  if (stsd.entries && stsd.entries.length > 0) {
-    const entry = stsd.entries[0];
+  addDebugLog('LOAD', `description探索: track keys = ${Object.keys(track).join(', ')}`);
 
-    // H.264 (avcC)
-    if (entry.avcC) {
-      addDebugLog('LOAD', 'avcC description取得（H.264）');
-      return new Uint8Array(entry.avcC.data);
-    }
+  // mp4box の track から stsd エントリを探す
+  // onReady 時点では mdia が無い場合があるため、mp4box の内部構造を辿る
 
-    // H.265 / HEVC (hvcC)
-    if (entry.hvcC) {
-      addDebugLog('LOAD', 'hvcC description取得（H.265/HEVC）');
-      return new Uint8Array(entry.hvcC.data);
+  // 方法1: track.mdia から辿る
+  if (track.mdia && track.mdia.minf && track.mdia.minf.stbl && track.mdia.minf.stbl.stsd) {
+    const stsd = track.mdia.minf.stbl.stsd;
+    if (stsd.entries && stsd.entries.length > 0) {
+      const entry = stsd.entries[0];
+      if (entry.avcC) {
+        addDebugLog('LOAD', 'avcC description取得（H.264）');
+        return new Uint8Array(entry.avcC.data);
+      }
+      if (entry.hvcC) {
+        addDebugLog('LOAD', 'hvcC description取得（H.265/HEVC）');
+        return new Uint8Array(entry.hvcC.data);
+      }
     }
   }
-  addDebugLog('WARN', 'avcC/hvcC boxが見つかりません');
+
+  // 方法2: mp4box の file 単位で track を辿る（onSamples時には使える）
+  addDebugLog('WARN', `track.mdia存在: ${!!track.mdia}`);
   return undefined;
 }
 
