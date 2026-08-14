@@ -301,11 +301,11 @@ async function demuxMP4(file) {
         nbSamples: 100,
       });
 
-      // description取得（onReadyでは取得できない場合が多い）
-      const description = getDecoderDescription(videoTrack);
-      addDebugLog('LOAD', `description取得結果(onReady): ${description ? `${description.length}bytes` : 'null — onSamplesで再取得'}`);
+      // description取得（W3C公式方法: file.getTrackByIdを使用）
+      const description = getDecoderDescription(mp4box, videoTrack);
+      addDebugLog('LOAD', `description取得結果(onReady): ${description ? `${description.length}bytes` : 'null'}`);
       decoderConfig = {
-        codec: videoTrack.codec,
+        codec: videoTrack.codec.startsWith('vp08') ? 'vp8' : videoTrack.codec,
         codedWidth: videoTrack.track_width,
         codedHeight: videoTrack.track_height,
       };
@@ -319,25 +319,6 @@ async function demuxMP4(file) {
 
     mp4box.onSamples = (trackId, ref, samples) => {
       let firstKeyFound = chunks.length > 0;
-
-      // 最初のサンプルからdescriptionを取得（onReady時点では取得できない）
-      if (!decoderConfig.description && samples.length > 0) {
-        const sample = samples[0];
-        if (sample.description) {
-          // sample.description.data に avcC/hvcC の生データが入ってる
-          if (sample.description.avcC) {
-            decoderConfig.description = new Uint8Array(sample.description.avcC.data);
-            addDebugLog('LOAD', 'description: avcC (H.264) — sampleから取得');
-          } else if (sample.description.hvcC) {
-            decoderConfig.description = new Uint8Array(sample.description.hvcC.data);
-            addDebugLog('LOAD', 'description: hvcC (H.265) — sampleから取得');
-          } else {
-            // description内の生データを探す
-            const descKeys = Object.keys(sample.description);
-            addDebugLog('WARN', `description keys: ${descKeys.join(', ')}`);
-          }
-        }
-      }
 
       for (const sample of samples) {
         // 最初のキーフレームが来るまでスキップ（デコーダ初期化に必要）
@@ -362,10 +343,6 @@ async function demuxMP4(file) {
       // 全サンプル抽出完了チェック
       if (samples.length === 0 || chunks.length >= videoTrack.nb_samples) {
         mp4box.stop();
-        // 最終チェック: descriptionがまだ無い場合は警告
-        if (!decoderConfig.description && videoTrack.codec.startsWith('hvc1')) {
-          addDebugLog('WARN', 'HEVCだがdescription未取得 — デコード失敗の可能性');
-        }
         resolve({ chunks, decoderConfig, videoTrack });
       }
     };
@@ -384,23 +361,26 @@ async function demuxMP4(file) {
   });
 }
 
-// decoder description（SPS/PPS）を取得 — H.264(avcC) と H.265(hvcC) 両対応
-function getDecoderDescription(track) {
-  if (track.mdia && track.mdia.minf && track.mdia.minf.stbl && track.mdia.minf.stbl.stsd) {
-    const stsd = track.mdia.minf.stbl.stsd;
-    if (stsd.entries && stsd.entries.length > 0) {
-      const entry = stsd.entries[0];
-      if (entry.avcC) {
-        addDebugLog('LOAD', 'description: avcC (H.264)');
-        return new Uint8Array(entry.avcC.data);
-      }
-      if (entry.hvcC) {
-        addDebugLog('LOAD', 'description: hvcC (H.265)');
-        return new Uint8Array(entry.hvcC.data);
-      }
+// decoder description — W3C公式サンプルと同じ方法
+// file.getTrackById() で内部trackオブジェクトを取得し、
+// avcC/hvcC/vpcC/av1C ボックスをシリアライズして先頭8バイトを削る
+function getDecoderDescription(file, track) {
+  const trak = file.getTrackById(track.id);
+  if (!trak || !trak.mdia || !trak.mdia.minf || !trak.mdia.minf.stbl || !trak.mdia.minf.stbl.stsd) {
+    addDebugLog('WARN', `description: trak取得失敗`);
+    return undefined;
+  }
+  for (const entry of trak.mdia.minf.stbl.stsd.entries) {
+    const box = entry.avcC || entry.hvcC || entry.vpcC || entry.av1C;
+    if (box) {
+      const stream = new window.MP4Box.DataStream(undefined, 0, window.MP4Box.DataStream.BIG_ENDIAN);
+      box.write(stream);
+      const description = new Uint8Array(stream.buffer, 8); // ボックスヘッダー(8バイト)を削除
+      addDebugLog('LOAD', `description取得OK: ${box.box_name || 'unknown'} (${description.length}bytes)`);
+      return description;
     }
   }
-  addDebugLog('WARN', `description取得失敗 (mdia: ${!!track.mdia})`);
+  addDebugLog('WARN', 'avcC/hvcC/vpcC/av1C boxが見つかりません');
   return undefined;
 }
 
