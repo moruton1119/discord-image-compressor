@@ -2,7 +2,7 @@
 
 ## 概要
 
-Discord無料プランの添付ファイル10MB制限に向けた、画像・動画圧縮Webアプリ。
+Discord無料プランの添付ファイル20MB制限に向けた、画像・動画圧縮Webアプリ。
 **完全ローカル処理**（サーバー不要・ファイル送信なし）。
 
 🔗 **公開URL**: https://moruton1119.github.io/discord-image-compressor/
@@ -181,10 +181,10 @@ ffmpeg.wasmのすべての問題（SAB、Worker、メモリ、速度）を一括
 
 ### 圧縮ロジック
 
-1. 動画の長さから目標ビットレートを計算: `bitrate = (10MB × 8) / duration - audioBitrate`
+1. 動画の長さから目標ビットレートを計算: `bitrate = (目標サイズ × 8) / duration - audioBitrate`
 2. 必要に応じて解像度をダウンスケール（最大1280px）
 3. Canvas + MediaRecorderで録画
-4. ファイルサイズが10MBを超えたら、ビットレートと解像度を下げて再圧縮
+4. ファイルサイズが目標サイズを超えたら、ビットレートと解像度を下げて再圧縮
 
 ---
 
@@ -271,7 +271,7 @@ for (const entry of trak.mdia.minf.stbl.stsd.entries) {
   - WebCodecs非対応環境向け自動切替
   - 2〜4倍速再生で処理短縮
 - 自動ビットレート計算（目標8MB・安全マージン）
-- 10MB以下のファイルは圧縮スキップ（品質保持）
+- 目標サイズ以下のファイルは圧縮スキップ（品質保持）
 
 ### インフラ
 - 📦 **GitHub Pages**（無料ホスティング）

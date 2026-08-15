@@ -9,7 +9,7 @@
  * 4. それでも無理なら解像度を下げる
  */
 
-const TARGET_SIZE_MB = 10;
+const TARGET_SIZE_MB = 20;
 const TARGET_SIZE_BYTES = TARGET_SIZE_MB * 1024 * 1024;
 
 // ============ DOM要素 ============

@@ -31,7 +31,7 @@ let isProcessing = false;
 //  画像圧縮（Rust/WASM）
 // ============================================================
 
-const TARGET_SIZE_MB = 10;
+const TARGET_SIZE_MB = 20;
 const TARGET_SIZE_BYTES = TARGET_SIZE_MB * 1024 * 1024;
 
 let wasmReady = false;
@@ -100,7 +100,7 @@ async function handleImages(files) {
 }
 
 async function compressImageWasm(file) {
-  // 元ファイルが既に10MB以下ならそのまま返す
+  // 元ファイルが既に目標サイズ以下ならそのまま返す
   if (file.size <= TARGET_SIZE_BYTES) {
     return { blob: file, isLossless: true };
   }
