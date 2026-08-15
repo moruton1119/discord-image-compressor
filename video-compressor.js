@@ -7,9 +7,12 @@
  */
 
 const TARGET_SIZE_MB = 10;
+// Discord無料プランの上限は20MB
+const TARGET_SIZE_MB = 20;
 const TARGET_SIZE_BYTES = TARGET_SIZE_MB * 1024 * 1024;
-// 完了判定は9MB（余裕を持たせる）
-const ACCEPT_SIZE_BYTES = 9 * 1024 * 1024;
+
+// 安全マージンを見て18MBを目標にする
+const ACCEPT_SIZE_BYTES = 18 * 1024 * 1024;
 
 // ============ デバッグログ ============
 function addDebugLog(level, message) {
