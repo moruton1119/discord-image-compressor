@@ -110,11 +110,6 @@ async function compressImageWasm(file) {
   const info = compressor.get_image_info(data);
 
   let blob;
-  if (format === 'png') {
-    const compressed = compressor.compress_webp_lossless(data);
-    blob = new Blob([compressed], { type: 'image/webp' });
-    return { blob, isLossless: true };
-  }
 
   const compressed = compressor.compress_to_target_size(data, TARGET_SIZE_BYTES);
   if (compressed.length === 0) throw new Error('圧縮に失敗しました');
