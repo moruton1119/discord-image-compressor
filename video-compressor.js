@@ -6,7 +6,6 @@
  * 2. Canvas + MediaRecorder（フォールバック・全環境対応）
  */
 
-const TARGET_SIZE_MB = 10;
 // Discord無料プランの上限は20MB
 const TARGET_SIZE_MB = 20;
 const TARGET_SIZE_BYTES = TARGET_SIZE_MB * 1024 * 1024;
