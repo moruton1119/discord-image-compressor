@@ -59,9 +59,9 @@ export async function compressVideo(file, onProgress, onStatus) {
     return { blob: file, originalSize: file.size, compressedSize: file.size };
   }
 
-  // 目標ビットレート計算（8MB基準で安全マージン）
+  // 目標ビットレート計算（ACCEPT_SIZE_BYTES基準＝18MB、安全マージン込み）
   const audioBitrate = 64000;
-  const targetTotalBitrate = Math.floor((8 * 1024 * 1024 * 8) / videoInfo.duration);
+  const targetTotalBitrate = Math.floor((ACCEPT_SIZE_BYTES * 8) / videoInfo.duration);
   const targetVideoBitrate = Math.max(100000, targetTotalBitrate - audioBitrate);
   addDebugLog('INFO', `目標ビットレート: video=${(targetVideoBitrate / 1000).toFixed(0)}kbps`);
 
