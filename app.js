@@ -152,15 +152,15 @@ videoInput.addEventListener('change', (e) => {
 
 async function handleVideo(file) {
   console.log('[VIDEO] handleVideo:', file.name, 'type=', file.type, 'size=', (file.size/1048576).toFixed(2), 'MB');
-  // デバッグパネルにも出力
-  const dp = document.getElementById('debugPanel');
-  if (dp) {
-    const t = new Date().toLocaleTimeString();
-    const line = document.createElement('div');
-    line.className = 'debug-line debug-load';
-    line.textContent = `[${t}] [VIDEO] ファイル受付: ${file.name} (${(file.size/1048576).toFixed(2)}MB)`;
-    dp.appendChild(line);
-  }
+  // デバッグパネルへの出力は廃止（ログ不要のため）
+  // const dp = document.getElementById('debugPanel');
+  // if (dp) {
+  //   const t = new Date().toLocaleTimeString();
+  //   const line = document.createElement('div');
+  //   line.className = 'debug-line debug-load';
+  //   line.textContent = `[${t}] [VIDEO] ファイル受付: ${file.name} (${(file.size/1048576).toFixed(2)}MB)`;
+  //   dp.appendChild(line);
+  // }
   if (!file.type.startsWith('video/')) {
     console.error('[VIDEO] 動画ではない:', file.type);
     alert('動画ファイルをアップロードしてください');
@@ -178,15 +178,16 @@ async function handleVideo(file) {
     processingSubtext.textContent = '初回は数秒かかります';
     fileCounter.textContent = '';
 
-    console.log('[VIDEO] ffmpeg.wasm を動的インポート中...');
-    const dp = document.getElementById('debugPanel');
-    if (dp) {
-      const t = new Date().toLocaleTimeString();
-      const line = document.createElement('div');
-      line.className = 'debug-line debug-load';
-      line.textContent = `[${t}] [LOAD] video-compressor.js をインポート中...`;
-      dp.appendChild(line);
-    }
+    console.log('[VIDEO] video-compressor.js を動的インポート中...');
+    // デバッグパネルへの出力は廃止
+    // const dp = document.getElementById('debugPanel');
+    // if (dp) {
+    //   const t = new Date().toLocaleTimeString();
+    //   const line = document.createElement('div');
+    //   line.className = 'debug-line debug-load';
+    //   line.textContent = `[${t}] [LOAD] video-compressor.js をインポート中...`;
+    //   dp.appendChild(line);
+    // }
 
     const { compressVideo } = await import('./video-compressor.js');
     console.log('[VIDEO] イポート完了、圧縮開始...');
@@ -200,15 +201,15 @@ async function handleVideo(file) {
     addVideoResult(file, result);
   } catch (err) {
     console.error('動画圧縮エラー:', err);
-    // デバッグパネルにもエラー表示
-    const dp = document.getElementById('debugPanel');
-    if (dp) {
-      const t = new Date().toLocaleTimeString();
-      const line = document.createElement('div');
-      line.className = 'debug-line debug-error';
-      line.textContent = `[${t}] [ERROR] 動画圧縮失敗: ${err.message || err}\nStack: ${err.stack || 'no stack'}`;
-      dp.appendChild(line);
-    }
+    // デバッグパネルへのエラー表示は廃止
+    // const dp = document.getElementById('debugPanel');
+    // if (dp) {
+    //   const t = new Date().toLocaleTimeString();
+    //   const line = document.createElement('div');
+    //   line.className = 'debug-line debug-error';
+    //   line.textContent = `[${t}] [ERROR] 動画圧縮失敗: ${err.message || err}\nStack: ${err.stack || 'no stack'}`;
+    //   dp.appendChild(line);
+    // }
     addErrorCard(videoResults, file, err.message);
   }
 
@@ -339,60 +340,48 @@ function escapeHtml(text) {
 window.addEventListener('dragover', (e) => e.preventDefault());
 window.addEventListener('drop', (e) => e.preventDefault());
 
-// ===== デバッグパネル =====
-const debugToggle = document.getElementById('debugToggle');
-const debugPanel = document.getElementById('debugPanel');
-const debugCopyBtn = document.getElementById('debugCopyBtn');
+// ===== デバッグパネル（廃止：ログ表示不要のため） =====
+// const debugToggle = document.getElementById('debugToggle');
+// const debugPanel = document.getElementById('debugPanel');
+// const debugCopyBtn = document.getElementById('debugCopyBtn');
 
-debugToggle.addEventListener('click', () => {
-  debugPanel.classList.toggle('active');
-});
+// debugToggle.addEventListener('click', () => {
+//   debugPanel.classList.toggle('active');
+// });
 
-debugCopyBtn.addEventListener('click', async () => {
-  const logs = debugPanel.innerText || 'ログなし';
-  try {
-    await navigator.clipboard.writeText(logs);
-    debugCopyBtn.textContent = '✅ コピーしました!';
-  } catch (e) {
-    // フォールバック: テキストエリアを表示して手動コピー
-    const ta = document.createElement('textarea');
-    ta.value = logs;
-    ta.style.position = 'fixed';
-    ta.style.top = '0';
-    ta.style.left = '0';
-    ta.style.width = '100%';
-    ta.style.height = '300px';
-    ta.style.fontSize = '12px';
-    ta.style.zIndex = '99999';
-    document.body.appendChild(ta);
-    ta.select();
-    document.execCommand('copy');
-    document.body.removeChild(ta);
-    debugCopyBtn.textContent = '✅ コピーしました!';
-  }
-  setTimeout(() => { debugCopyBtn.textContent = '📋 ログをすべてコピー'; }, 2000);
-});
+// debugCopyBtn.addEventListener('click', async () => {
+//   const logs = debugPanel.innerText || 'ログなし';
+//   try {
+//     await navigator.clipboard.writeText(logs);
+//     debugCopyBtn.textContent = '✅ コピーしました!';
+//   } catch (e) {
+//     // フォールバック: テキストエリアを表示して手動コピー
+//     const ta = document.createElement('textarea');
+//     ta.value = logs;
+//     ta.style.position = 'fixed';
+//     ta.style.top = '0';
+//     ta.style.left = '0';
+//     ta.style.width = '100%';
+//     ta.style.height = '300px';
+//     ta.style.fontSize = '12px';
+//     ta.style.zIndex = '99999';
+//     document.body.appendChild(ta);
+//     ta.select();
+//     document.execCommand('copy');
+//     document.body.removeChild(ta);
+//     debugCopyBtn.textContent = '✅ コピーしました!';
+//   }
+//   setTimeout(() => { debugCopyBtn.textContent = '📋 ログをすべてコピー'; }, 2000);
+// });
 
-// ブラウザ情報を初期ログに出力
-function logBrowserInfo() {
-  const lines = [];
-  lines.push(`UA: ${navigator.userAgent}`);
-  lines.push(`Platform: ${navigator.platform}`);
-  // SharedArrayBuffer のチェックログは不要なので削除
-  // crossOriginIsolated のチェックログは不要なので削除
-  lines.push(`WebAssembly: ${typeof WebAssembly !== 'undefined' ? '✅' : '❌'}`);
-  lines.push(`Device Memory: ${navigator.deviceMemory || 'unknown'} GB`);
-  lines.push(`Hardware Concurrency: ${navigator.hardwareConcurrency || 'unknown'} cores`);
-
-  const time = new Date().toLocaleTimeString();
-  lines.forEach(line => {
-    const entry = `[${time}] [INFO] ${line}`;
-    console.log(entry);
-    const div = document.createElement('div');
-    div.className = 'debug-line debug-info';
-    div.textContent = entry;
-    debugPanel.appendChild(div);
-  });
-}
-
-logBrowserInfo();
+// ブラウザ情報の初期ログ出力（廃止）
+// function logBrowserInfo() {
+//   const lines = [];
+//   lines.push(`UA: ${navigator.userAgent}`);
+//   lines.push(`Platform: ${navigator.platform}`);
+//   lines.push(`WebAssembly: ${typeof WebAssembly !== 'undefined' ? '✅' : '❌'}`);
+//   lines.push(`Device Memory: ${navigator.deviceMemory || 'unknown'} GB`);
+//   lines.push(`Hardware Concurrency: ${navigator.hardwareConcurrency || 'unknown'} cores`);
+//   console.log(lines.join('\n'));
+// }
+// logBrowserInfo();

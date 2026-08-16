@@ -13,19 +13,20 @@ const TARGET_SIZE_BYTES = TARGET_SIZE_MB * 1024 * 1024;
 // 安全マージンを見て18MBを目標にする
 const ACCEPT_SIZE_BYTES = 18 * 1024 * 1024;
 
-// ============ デバッグログ ============
+// ============ デバッグログ（パネル表示は廃止・consoleのみ） ============
 function addDebugLog(level, message) {
   const time = new Date().toLocaleTimeString();
   const entry = `[${time}] [${level}] ${message}`;
   console.log(entry);
-  const panel = document.getElementById('debugPanel');
-  if (panel) {
-    const line = document.createElement('div');
-    line.className = `debug-line debug-${level.toLowerCase()}`;
-    line.textContent = entry;
-    panel.appendChild(line);
-    panel.scrollTop = panel.scrollHeight;
-  }
+  // デバッグパネルへの表示は不要のためコメントアウト
+  // const panel = document.getElementById('debugPanel');
+  // if (panel) {
+  //   const line = document.createElement('div');
+  //   line.className = `debug-line debug-${level.toLowerCase()}`;
+  //   line.textContent = entry;
+  //   panel.appendChild(line);
+  //   panel.scrollTop = panel.scrollHeight;
+  // }
 }
 
 // ============ エンジン選択 ============
