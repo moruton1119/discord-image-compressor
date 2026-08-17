@@ -285,7 +285,8 @@ async function compressWithWebCodecs(file, videoInfo, targetWidth, targetHeight,
                 if (cancelRequested) { reject(new Error(CANCEL_MESSAGE)); return; }
                 // 試行回数上限
                 if (attempt + 1 >= MAX_ATTEMPTS) {
-                  reject(new Error(`${MAX_ATTEMPTS}回試行しましたが${TARGET_SIZE_MB}MB以下に圧縮できませんでした。動画が長すぎる可能性があります`));
+                  addDebugLog('WARN', `${MAX_ATTEMPTS}回試行したが${TARGET_SIZE_MB}MB未達。最終結果を妥協案として返却`);
+                  resolve({ blob, originalSize: file.size, compressedSize: blob.size, degraded: true });
                   return;
                 }
                 addDebugLog('WARN', `サイズ超過 (${(blob.size / 1024 / 1024).toFixed(2)}MB > ${TARGET_SIZE_MB}MB)。実測から逆算して再圧縮...`);
@@ -560,7 +561,8 @@ async function compressWithMediaRecorder(file, videoInfo, targetWidth, targetHei
   if (blob.size > TARGET_SIZE_BYTES) {
     // 試行回数上限
     if (attempt + 1 >= MAX_ATTEMPTS) {
-      throw new Error(`${MAX_ATTEMPTS}回試行しましたが${TARGET_SIZE_MB}MB以下に圧縮できませんでした。動画が長すぎる可能性があります`);
+      addDebugLog('WARN', `${MAX_ATTEMPTS}回試行したが${TARGET_SIZE_MB}MB未達。最終結果を妥協案として返却`);
+      return { blob, originalSize: file.size, compressedSize: blob.size, degraded: true };
     }
     addDebugLog('WARN', `サイズ超過 (${(blob.size / 1024 / 1024).toFixed(2)}MB > ${TARGET_SIZE_MB}MB)。実測から逆算して再圧縮...`);
     // 実測オーバー率から逆算（0.95は安全係数）

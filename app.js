@@ -266,6 +266,10 @@ async function handleVideo(file) {
 function addVideoResult(file, result) {
   const card = document.createElement('div');
   card.className = 'result-card';
+  if (result.degraded) {
+    card.style.borderColor = '#faa61a';
+    card.style.background = 'rgba(250, 166, 26, 0.08)';
+  }
 
   const previewUrl = URL.createObjectURL(result.blob);
   const originalMB = (result.originalSize / 1048576).toFixed(2);
@@ -280,8 +284,13 @@ function addVideoResult(file, result) {
         <span class="stat before">📐 ${originalMB} MB</span>
         <span class="stat after">📦 ${compressedMB} MB</span>
         <span class="stat ratio">⚡ ${ratio}% 圧縮</span>
-        <span class="stat">🎬 ffmpeg.wasm</span>
+        ${result.degraded
+          ? '<span class="stat" style="color:#faa61a;">⚠️ 目標超過（3回試行・妥協品質）</span>'
+          : '<span class="stat">🎬 WebCodecs</span>'}
       </div>
+      ${result.degraded
+        ? '<div style="color:#faa61a; font-size:0.78rem; margin-top:6px;">💡 動画が長すぎて目標サイズ未達です。妥協案としてダウンロードできますが、送信先で弾かれる可能性があります。</div>'
+        : ''}
     </div>
     <button class="download-btn">⬇️ ダウンロード</button>
   `;
