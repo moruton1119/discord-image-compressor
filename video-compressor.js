@@ -374,7 +374,7 @@ async function compressWithWebCodecs(file, videoInfo, targetWidth, targetHeight,
                 // 試行回数上限
                 if (attempt + 1 >= MAX_ATTEMPTS) {
                   addDebugLog('WARN', `${MAX_ATTEMPTS}回試行したが${TARGET_SIZE_MB}MB未達。最終結果を妥協案として返却`);
-                  resolve({ blob, originalSize: file.size, compressedSize: blob.size, degraded: true });
+                  resolve({ blob, originalSize: file.size, compressedSize: blob.size, degraded: true, engine: 'webcodecs' });
                   return;
                 }
                 addDebugLog('WARN', `サイズ超過 (${(blob.size / 1024 / 1024).toFixed(2)}MB > ${TARGET_SIZE_MB}MB)。実測から逆算して再圧縮...`);
@@ -387,7 +387,7 @@ async function compressWithWebCodecs(file, videoInfo, targetWidth, targetHeight,
                 compressWithWebCodecs(file, videoInfo, smallerWidth, smallerHeight, lowerBitrate, onProgress, onStatus, attempt + 1, libsPreload)
                   .then(resolve).catch(reject);
               } else {
-                resolve({ blob, originalSize: file.size, compressedSize: blob.size });
+                resolve({ blob, originalSize: file.size, compressedSize: blob.size, engine: 'webcodecs' });
               }
             }).catch(reject);
           }
@@ -639,7 +639,11 @@ async function compressWithMediaRecorder(file, videoInfo, targetWidth, targetHei
 
   const video = document.createElement('video');
   video.src = URL.createObjectURL(file);
-  video.muted = true;   // 音を出さない
+  video.muted = false;  // ミュート禁止: WebAudio経由で音声を録画に含めるため。
+  // （createMediaElementSourceで音声はWebAudioグラフにのみ流れ、
+  //   audioCtx.destinationに接続しない限りスピーカーからは出ない。
+  //   muted=trueにするとWebAudio経由の音声も無音化してしまい、
+  //   出力動画の音声が消えるバグの原因だった）
   video.playsInline = true;
 
   await new Promise((resolve, reject) => {
@@ -746,7 +750,7 @@ async function compressWithMediaRecorder(file, videoInfo, targetWidth, targetHei
     // 試行回数上限
     if (attempt + 1 >= MAX_ATTEMPTS) {
       addDebugLog('WARN', `${MAX_ATTEMPTS}回試行したが${TARGET_SIZE_MB}MB未達。最終結果を妥協案として返却`);
-      return { blob, originalSize: file.size, compressedSize: blob.size, degraded: true };
+      return { blob, originalSize: file.size, compressedSize: blob.size, degraded: true, engine: 'mediarecorder' };
     }
     addDebugLog('WARN', `サイズ超過 (${(blob.size / 1024 / 1024).toFixed(2)}MB > ${TARGET_SIZE_MB}MB)。実測から逆算して再圧縮...`);
     // 実測オーバー率から逆算（0.95は安全係数）
@@ -758,7 +762,7 @@ async function compressWithMediaRecorder(file, videoInfo, targetWidth, targetHei
     return await compressWithMediaRecorder(file, videoInfo, smallerWidth, smallerHeight, lowerBitrate, audioBitrate, onProgress, onStatus, attempt + 1);
   }
 
-  return { blob, originalSize: file.size, compressedSize: blob.size };
+  return { blob, originalSize: file.size, compressedSize: blob.size, engine: 'mediarecorder' };
 }
 
 // ============ ヘルパー ============
