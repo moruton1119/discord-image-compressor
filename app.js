@@ -300,7 +300,9 @@ function addVideoResult(file, result) {
   downloadBtn.addEventListener('click', () => {
     const a = document.createElement('a');
     a.href = previewUrl;
-    a.download = `${baseName}_compressed.mp4`;
+    // 実際のコンテナ形式に合わせた拡張子（WebMが出力なら.webm）
+    const ext = (result.blob.type || '').includes('webm') ? 'webm' : 'mp4';
+    a.download = `${baseName}_compressed.${ext}`;
     document.body.appendChild(a);
     a.click();
     document.body.removeChild(a);
