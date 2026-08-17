@@ -576,6 +576,16 @@
     <p>画像も動画も20MB以下に！完全ローカル処理でファイル送信なし</p>
   </header>
 
+  <!-- プラン選択（共通） -->
+  <div class="settings plan-settings">
+    <label>🏷️ Discordプラン:</label>
+    <select id="planSelect">
+      <option value="free" selected>無料 (20MBまで)</option>
+      <option value="basic">Nitro Basic (50MBまで)</option>
+      <option value="nitro">Nitro (500MBまで)</option>
+    </select>
+  </div>
+
   <!-- タブ切り替え -->
   <div class="tabs">
     <div class="tab active" data-tab="image">🖼️ 画像圧縮 (Rust/WASM)</div>

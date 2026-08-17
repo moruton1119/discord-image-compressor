@@ -6,12 +6,17 @@
  * 2. Canvas + MediaRecorder（フォールバック・全環境対応）
  */
 
-// Discord無料プランの上限は20MB
-const TARGET_SIZE_MB = 20;
-const TARGET_SIZE_BYTES = TARGET_SIZE_MB * 1024 * 1024;
+// Discordプラン別の上限（2026年8月時点の公式仕様）
+// 無料: 20MB / Nitro Basic: 50MB / Nitro: 500MB
+let TARGET_SIZE_MB = 20;
+let TARGET_SIZE_BYTES = TARGET_SIZE_MB * 1024 * 1024;
+let ACCEPT_SIZE_BYTES = 18 * 1024 * 1024; // 10%の安全マージン
 
-// 安全マージンを見て18MBを目標にする
-const ACCEPT_SIZE_BYTES = 18 * 1024 * 1024;
+function applyTargetSize(mb) {
+  TARGET_SIZE_MB = mb;
+  TARGET_SIZE_BYTES = mb * 1024 * 1024;
+  ACCEPT_SIZE_BYTES = Math.floor(mb * 0.9) * 1024 * 1024;
+}
 
 // ============ キャンセル制御 ============
 let cancelRequested = false;
@@ -50,9 +55,12 @@ function getEngine() {
 
 // ============ 動画圧縮メイン ============
 
-export async function compressVideo(file, onProgress, onStatus) {
+export async function compressVideo(file, onProgress, onStatus, targetSizeMB = 20) {
   // キャンセル状態をリセット
   cancelRequested = false;
+  // プラン別の目標サイズを適用
+  applyTargetSize(targetSizeMB);
+  addDebugLog('INFO', `目標サイズ: ${TARGET_SIZE_MB}MB（プラン選択）`);
 
   addDebugLog('INFO', `動画圧縮開始: ${file.name}`);
   addDebugLog('INFO', `ファイルサイズ: ${(file.size / 1024 / 1024).toFixed(2)} MB`);
@@ -80,8 +88,10 @@ export async function compressVideo(file, onProgress, onStatus) {
   const targetVideoBitrate = Math.max(100000, targetTotalBitrate - audioBitrate);
   addDebugLog('INFO', `目標ビットレート: video=${(targetVideoBitrate / 1000).toFixed(0)}kbps`);
 
-  // 解像度スケール
-  const maxResolution = 1280;
+  // 解像度スケール（プラン別：無料は1280px、Basicは1920px、Nitroは元解像度維持）
+  let maxResolution = 1280;
+  if (TARGET_SIZE_MB >= 500) maxResolution = Infinity;
+  else if (TARGET_SIZE_MB >= 50) maxResolution = 1920;
   let targetWidth = videoInfo.width;
   let targetHeight = videoInfo.height;
   if (targetWidth > maxResolution || targetHeight > maxResolution) {

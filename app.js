@@ -31,8 +31,28 @@ let isProcessing = false;
 //  画像圧縮（Rust/WASM）
 // ============================================================
 
-const TARGET_SIZE_MB = 20;
-const TARGET_SIZE_BYTES = TARGET_SIZE_MB * 1024 * 1024;
+// ===== Discordプラン管理 =====
+// 無料: 20MB / Nitro Basic: 50MB / Nitro: 500MB（2026年8月時点の公式仕様）
+const PLAN_LIMITS = { 'free': 20, 'basic': 50, 'nitro': 500 };
+
+function getPlanMB() {
+  const planSelect = document.getElementById('planSelect');
+  return PLAN_LIMITS[planSelect?.value] || 20;
+}
+
+function getImageTargetBytes() {
+  return getPlanMB() * 1024 * 1024;
+}
+
+function updateTargetSizeDisplay() {
+  const mb = getPlanMB();
+  document.querySelectorAll('.target-size').forEach(el => {
+    el.textContent = `${mb} MB`;
+  });
+}
+
+document.getElementById('planSelect')?.addEventListener('change', updateTargetSizeDisplay);
+updateTargetSizeDisplay();
 
 let wasmReady = false;
 let compressor = null;
@@ -101,7 +121,8 @@ async function handleImages(files) {
 
 async function compressImageWasm(file) {
   // 元ファイルが既に目標サイズ以下ならそのまま返す
-  if (file.size <= TARGET_SIZE_BYTES) {
+  const imageTargetBytes = getImageTargetBytes();
+  if (file.size <= imageTargetBytes) {
     return { blob: file, isLossless: true };
   }
 
@@ -111,7 +132,7 @@ async function compressImageWasm(file) {
 
   let blob;
 
-  const compressed = compressor.compress_to_target_size(data, TARGET_SIZE_BYTES);
+  const compressed = compressor.compress_to_target_size(data, imageTargetBytes);
   if (compressed.length === 0) throw new Error('圧縮に失敗しました');
   blob = new Blob([compressed], { type: 'image/jpeg' });
   return { blob, isLossless: false };
@@ -213,7 +234,8 @@ async function handleVideo(file) {
     const result = await compressVideo(
       file,
       (percent) => updateProgress(percent),
-      (status) => { processingText.textContent = '🎬 動画圧縮中...'; processingSubtext.textContent = status; }
+      (status) => { processingText.textContent = '🎬 動画圧縮中...'; processingSubtext.textContent = status; },
+      getPlanMB()
     );
 
     addVideoResult(file, result);
