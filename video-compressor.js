@@ -29,20 +29,29 @@ export function requestCancel() {
 const MAX_ATTEMPTS = 3;
 export const CANCEL_MESSAGE = 'キャンセルされました';
 
-// ============ デバッグログ（パネル表示は廃止・consoleのみ） ============
+// ============ ログ管理（エラー追跡用バッファ＋console） ============
+// ログはメモリに蓄積し、「ログをコピー」ボタンで一括取得できる
+const logBuffer = [];
+const MAX_LOGS = 600;
+
+export function getLogs() {
+  return logBuffer.join('\n');
+}
+
+export function clearLogs() {
+  logBuffer.length = 0;
+}
+
 function addDebugLog(level, message) {
   const time = new Date().toLocaleTimeString();
   const entry = `[${time}] [${level}] ${message}`;
+  logBuffer.push(entry);
+  if (logBuffer.length > MAX_LOGS) logBuffer.shift();
   console.log(entry);
-  // デバッグパネルへの表示は不要のためコメントアウト
-  // const panel = document.getElementById('debugPanel');
-  // if (panel) {
-  //   const line = document.createElement('div');
-  //   line.className = `debug-line debug-${level.toLowerCase()}`;
-  //   line.textContent = entry;
-  //   panel.appendChild(line);
-  //   panel.scrollTop = panel.scrollHeight;
-  // }
+}
+
+function truncateName(name, maxLen = 40) {
+  return name.length <= maxLen ? name : name.slice(0, maxLen - 3) + '...';
 }
 
 // ============ エンジン選択 ============
@@ -60,11 +69,7 @@ export async function compressVideo(file, onProgress, onStatus, targetSizeMB = 2
   cancelRequested = false;
   // プラン別の目標サイズを適用
   applyTargetSize(targetSizeMB);
-  addDebugLog('INFO', `目標サイズ: ${TARGET_SIZE_MB}MB（プラン選択）`);
-
-  addDebugLog('INFO', `動画圧縮開始: ${file.name}`);
-  addDebugLog('INFO', `ファイルサイズ: ${(file.size / 1024 / 1024).toFixed(2)} MB`);
-  addDebugLog('INFO', `MIME Type: ${file.type}`);
+  addDebugLog('INFO', `動画圧縮開始: ${truncateName(file.name)} (${(file.size / 1048576).toFixed(2)}MB) — 目標${TARGET_SIZE_MB}MB`);
 
   const engine = getEngine();
   addDebugLog('INFO', `エンジン: ${engine}`);
@@ -74,9 +79,7 @@ export async function compressVideo(file, onProgress, onStatus, targetSizeMB = 2
 
   onStatus?.('動画情報を解析中...');
   const videoInfo = await getVideoInfo(file);
-  addDebugLog('INFO', `解像度: ${videoInfo.width}x${videoInfo.height}`);
-  addDebugLog('INFO', `動画の長さ: ${videoInfo.duration.toFixed(1)}秒`);
-  addDebugLog('INFO', `フレームレート: ${videoInfo.fps}`);
+  addDebugLog('INFO', `入力: ${videoInfo.width}x${videoInfo.height}, ${videoInfo.duration.toFixed(1)}秒, ${videoInfo.fps}fps`);
 
   // 元ファイルが既に目標サイズ以下ならそのまま返す
   if (file.size <= TARGET_SIZE_BYTES) {
@@ -131,7 +134,7 @@ async function compressWithWebCodecs(file, videoInfo, targetWidth, targetHeight,
   onStatus?.('MP4パーサーを読み込み中...');
   onProgress?.(2);
   await (libsPreload || preloadWebCodecsLibs());
-  addDebugLog('LOAD', 'mp4box.js / mp4-muxer 読み込みOK（同梱・先読み済み）');
+  addDebugLog('LOAD', 'MP4解析開始');
   onProgress?.(5);
 
   // Phase 2: MP4デマックス (5〜15%)
@@ -472,7 +475,6 @@ async function demuxMP4(file) {
 
       // description取得（W3C公式方法: file.getTrackByIdを使用）
       const description = getDecoderDescription(mp4box, videoTrack);
-      addDebugLog('LOAD', `description取得結果(onReady): ${description ? `${description.length}bytes` : 'null'}`);
       decoderConfig = {
         codec: videoTrack.codec.startsWith('vp08') ? 'vp8' : videoTrack.codec,
         codedWidth: videoTrack.track_width,
@@ -512,11 +514,9 @@ async function demuxMP4(file) {
         // 最初のキーフレームが来るまでスキップ（デコーダ初期化に必要）
         if (!firstKeyFound) {
           if (!sample.is_sync) {
-            addDebugLog('LOAD', '最初のキーフレームを待機中...');
             continue;
           }
           firstKeyFound = true;
-          addDebugLog('LOAD', '最初のキーフレーム取得');
         }
 
         const chunk = new EncodedVideoChunk({
@@ -625,7 +625,6 @@ function getDecoderDescription(file, track) {
       const stream = new window.MP4Box.DataStream(undefined, 0, window.MP4Box.DataStream.BIG_ENDIAN);
       box.write(stream);
       const description = new Uint8Array(stream.buffer, 8); // ボックスヘッダー(8バイト)を削除
-      addDebugLog('LOAD', `description取得OK: ${box.box_name || 'unknown'} (${description.length}bytes)`);
       return description;
     }
   }

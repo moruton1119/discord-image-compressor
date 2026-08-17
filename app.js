@@ -28,6 +28,45 @@ const fileCounter = document.getElementById('fileCounter');
 let isProcessing = false;
 
 // ============================================================
+//  ログコピー（エラー報告用）
+// ============================================================
+
+document.getElementById('copyLogBtn').addEventListener('click', async () => {
+  const btn = document.getElementById('copyLogBtn');
+  const videoLogs = videoCompressorModule?.getLogs?.() || '';
+  const text = [
+    '=== Discord 圧縮くん 処理ログ ===',
+    `URL: ${location.href}`,
+    `UA: ${navigator.userAgent}`,
+    `時刻: ${new Date().toISOString()}`,
+    '',
+    '--- アプリ ---',
+    appLogBuffer.length > 0 ? appLogBuffer.join('\n') : '（ログなし）',
+    '',
+    '--- 動画圧縮 ---',
+    videoLogs || '（ログなし）',
+  ].join('\n');
+
+  try {
+    await navigator.clipboard.writeText(text);
+  } catch {
+    // クリップボードAPI不可の環境向けフォールバック
+    const ta = document.createElement('textarea');
+    ta.value = text;
+    document.body.appendChild(ta);
+    ta.select();
+    document.execCommand('copy');
+    document.body.removeChild(ta);
+  }
+  btn.textContent = '✅ コピーしました';
+  btn.classList.add('copied');
+  setTimeout(() => {
+    btn.textContent = '📋 処理ログをコピー';
+    btn.classList.remove('copied');
+  }, 2000);
+});
+
+// ============================================================
 //  画像圧縮（Rust/WASM）
 // ============================================================
 
@@ -59,6 +98,17 @@ let compressor = null;
 
 let wasmInitError = null;
 
+// ============ アプリログ（エラー追跡用バッファ＋console） ============
+const appLogBuffer = [];
+
+function appLog(level, message) {
+  const time = new Date().toLocaleTimeString();
+  const entry = `[${time}] [${level}] ${message}`;
+  appLogBuffer.push(entry);
+  if (appLogBuffer.length > 600) appLogBuffer.shift();
+  console.log(entry);
+}
+
 async function ensureWasm() {
   if (wasmReady) return;
   if (wasmInitError) throw wasmInitError;
@@ -71,10 +121,10 @@ async function ensureWasm() {
     await init({ module_or_path: './image_compressor_bg.wasm' });
     compressor = new wasmModule.ImageCompressor();
     wasmReady = true;
-    console.log('🦀 Rust/WASM エンジン初期化完了!');
+    appLog('INFO', '画像エンジン（Rust/WASM）初期化完了');
   } catch (err) {
     wasmInitError = err;
-    console.error('WASM初期化エラー:', err);
+    appLog('ERROR', `WASM初期化エラー: ${err.message}`);
     throw err;
   }
 }
@@ -98,6 +148,7 @@ ensureWasm().catch(err => {
 async function handleImages(files) {
   const imageFiles = Array.from(files).filter(f => f.type.startsWith('image/'));
   if (imageFiles.length === 0) { alert('画像ファイルをアップロードしてください'); return; }
+  appLog('INFO', `画像圧縮受付: ${imageFiles.length}枚`);
   await ensureWasm();
 
   isProcessing = true;
@@ -113,7 +164,11 @@ async function handleImages(files) {
     try {
       const result = await compressImageWasm(imageFiles[i]);
       addImageResult(imageFiles[i], result);
-    } catch (err) { addErrorCard(results, imageFiles[i], err.message); }
+      appLog('INFO', `画像圧縮完了: ${truncate(imageFiles[i].name, 40)} (${(imageFiles[i].size/1048576).toFixed(2)}MB → ${(result.blob.size/1048576).toFixed(2)}MB${result.isLossless ? '・圧縮不要' : ''})`);
+    } catch (err) {
+      appLog('ERROR', `画像圧縮失敗: ${truncate(imageFiles[i].name, 40)} — ${err.message}`);
+      addErrorCard(results, imageFiles[i], err.message);
+    }
   }
 
   finishProcessing();
@@ -171,7 +226,6 @@ function resetCancelButton() {
 }
 
 videoUploadArea.addEventListener('click', () => {
-  console.log('[VIDEO] 動画エリアクリック');
   if (!isProcessing) videoInput.click();
 });
 videoUploadArea.addEventListener('dragover', (e) => { e.preventDefault(); if (!isProcessing) videoUploadArea.classList.add('dragover'); });
@@ -179,27 +233,16 @@ videoUploadArea.addEventListener('dragleave', () => videoUploadArea.classList.re
 videoUploadArea.addEventListener('drop', (e) => {
   e.preventDefault();
   videoUploadArea.classList.remove('dragover');
-  console.log('[VIDEO] ドロップ検知:', e.dataTransfer.files.length, 'ファイル');
   if (!isProcessing && e.dataTransfer.files.length > 0) handleVideo(e.dataTransfer.files[0]);
 });
 videoInput.addEventListener('change', (e) => {
-  console.log('[VIDEO] ファイル選択:', e.target.files.length, 'ファイル');
   if (!isProcessing && e.target.files.length > 0) handleVideo(e.target.files[0]);
 });
 
 async function handleVideo(file) {
-  console.log('[VIDEO] handleVideo:', file.name, 'type=', file.type, 'size=', (file.size/1048576).toFixed(2), 'MB');
-  // デバッグパネルへの出力は廃止（ログ不要のため）
-  // const dp = document.getElementById('debugPanel');
-  // if (dp) {
-  //   const t = new Date().toLocaleTimeString();
-  //   const line = document.createElement('div');
-  //   line.className = 'debug-line debug-load';
-  //   line.textContent = `[${t}] [VIDEO] ファイル受付: ${file.name} (${(file.size/1048576).toFixed(2)}MB)`;
-  //   dp.appendChild(line);
-  // }
+  appLog('INFO', `動画圧縮受付: ${file.name} (${(file.size/1048576).toFixed(2)}MB)`);
   if (!file.type.startsWith('video/')) {
-    console.error('[VIDEO] 動画ではない:', file.type);
+    appLog('ERROR', `動画以外のファイル: ${file.type}`);
     alert('動画ファイルをアップロードしてください');
     return;
   }
@@ -215,21 +258,10 @@ async function handleVideo(file) {
     processingSubtext.textContent = '初回は数秒かかります';
     fileCounter.textContent = '';
 
-    console.log('[VIDEO] video-compressor.js を動的インポート中...');
-    // デバッグパネルへの出力は廃止
-    // const dp = document.getElementById('debugPanel');
-    // if (dp) {
-    //   const t = new Date().toLocaleTimeString();
-    //   const line = document.createElement('div');
-    //   line.className = 'debug-line debug-load';
-    //   line.textContent = `[${t}] [LOAD] video-compressor.js をインポート中...`;
-    //   dp.appendChild(line);
-    // }
 
     const mod = await import('./video-compressor.js');
     videoCompressorModule = mod;
     const { compressVideo } = mod;
-    console.log('[VIDEO] イポート完了、圧縮開始...');
 
     const result = await compressVideo(
       file,
@@ -239,6 +271,7 @@ async function handleVideo(file) {
     );
 
     addVideoResult(file, result);
+    appLog('INFO', `動画圧縮完了: ${truncate(file.name, 40)} (${(result.originalSize/1048576).toFixed(2)}MB → ${(result.compressedSize/1048576).toFixed(2)}MB${result.degraded ? '・目標未達の妥協案' : ''})`);
   } catch (err) {
     console.error('動画圧縮エラー:', err);
     // デバッグパネルへのエラー表示は廃止
@@ -252,8 +285,9 @@ async function handleVideo(file) {
     // }
     // キャンセルの場合はエラーカードを出さない
     if (err && err.message === 'キャンセルされました') {
-      console.log('[VIDEO] ユーザーによりキャンセルされました');
+      appLog('INFO', 'ユーザーによりキャンセルされました');
     } else {
+      appLog('ERROR', `動画圧縮失敗: ${truncate(file.name, 40)} — ${err.message}`);
       addErrorCard(videoResults, file, err.message);
     }
   }

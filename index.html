@@ -576,6 +576,36 @@
       margin-bottom: 20px;
     }
 
+    /* ===== ログコピー ===== */
+    .log-actions {
+      width: 100%;
+      max-width: 600px;
+      margin-top: 24px;
+      display: flex;
+      justify-content: center;
+    }
+
+    #copyLogBtn {
+      padding: 8px 20px;
+      background: transparent;
+      border: 1px solid #4e545c;
+      border-radius: 8px;
+      color: #9aa0a6;
+      font-size: 0.8rem;
+      cursor: pointer;
+      transition: all 0.2s;
+    }
+
+    #copyLogBtn:hover {
+      border-color: #7289DA;
+      color: #e0e0e0;
+    }
+
+    #copyLogBtn.copied {
+      border-color: #3ba55d;
+      color: #3ba55d;
+    }
+
     .changelog h2 {
       font-size: 1.1rem;
       color: #e0e0e0;
@@ -716,6 +746,11 @@
   <div class="footer-note">
     🔒 全処理はブラウザ内で完結します。サーバーへの送信は一切ありません。<br>
     Discord各プランの添付ファイル上限（無料 20MB / Nitro Basic 50MB / Nitro 500MB）に対応。
+  </div>
+
+  <!-- ログコピー（エラー報告用） -->
+  <div class="log-actions">
+    <button id="copyLogBtn">📋 処理ログをコピー</button>
   </div>
 
   <!-- ===== 更新履歴 ===== -->
