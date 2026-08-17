@@ -1,6 +1,6 @@
 /**
  * Discord 圧縮くん — 統合エントリーポイント
- * 画像圧縮（Rust/WASM）と動画圧縮（ffmpeg.wasm）を統合
+ * 画像圧縮（Rust/WASM）と動画圧縮（WebCodecs/MediaRecorder）を統合
  */
 
 // ===== タブ切り替え =====
@@ -203,7 +203,7 @@ function addImageResult(file, result) {
 }
 
 // ============================================================
-//  動画圧縮（ffmpeg.wasm）
+//  動画圧縮（WebCodecs / MediaRecorder）
 // ============================================================
 const videoUploadArea = document.getElementById('videoUploadArea');
 const videoInput = document.getElementById('videoInput');
@@ -253,8 +253,8 @@ async function handleVideo(file) {
   progressBar.classList.add('active');
 
   try {
-    // ffmpeg.wasm を動的インポート（初回のみロード）
-    processingText.textContent = '🎬 ffmpeg.wasm を読み込み中...';
+    // 動画エンジン（video-compressor.js）を動的インポート（初回のみロード）
+    processingText.textContent = '🎬 動画エンジンを準備中...';
     processingSubtext.textContent = '初回は数秒かかります';
     fileCounter.textContent = '';
 
