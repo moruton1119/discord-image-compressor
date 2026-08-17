@@ -418,3 +418,15 @@ for (const entry of trak.mdia.minf.stbl.stsd.entries) {
 ### その他修正
 
 - WASM initの非推奨引数形式を修正（文字列直渡し→`{ module_or_path }`オブジェクト）。deprecated警告の解消
+
+### 躓き②: SafariでMediaRecorderフォールバックが全滅する問題
+
+**現象:** Safari（特にiOS）で「対応する動画エンコーダーが見つかりません」エラー。
+
+**原因:** MediaRecorderの録画形式候補がWebM系のみだった。SafariのMediaRecorderはWebM非対応・MP4のみ対応のため、WebCodecs非対応環境やフォールバック時に確実に失敗していた。
+
+**修正:**
+- 候補に`video/mp4;codecs=***`と`video/mp4`を追加（ChromeはWebM優先のまま）
+- DL拡張子を`blob.type`から実際のコンテナ形式に合わせて付けるよう修正（WebM出力なのに`.mp4`という名前で保存される既存バグも同時に解消）
+
+**教訓:** MediaRecorderの対応形式はブラウザごとに大きく異なる（Chrome=WebM、Safari=MP4）。`isTypeSupported()`の候補リストには主要両形式を並べ、実際に選ばれた形式（`recorder.mimeType`/`blob.type`）を保存時の拡張子に反映するのが安全。
