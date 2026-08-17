@@ -542,12 +542,18 @@ async function demuxMP4(file) {
           try {
             const audioDesc = getDecoderDescription(mp4box, audioTrack);
             if (audioDesc) {
-              audioDecoderConfig = {
-                codec: 'mp4a.40.2',
-                sampleRate: audioTrack.audio.sample_rate,
-                numberOfChannels: audioTrack.audio.channel_count,
-                description: audioDesc,
-              };
+              // mp4-muxerはAudioSpecificConfigのみ期待するため、esds中身から抽出する
+              const asc = extractAudioSpecificConfig(audioDesc);
+              if (asc) {
+                audioDecoderConfig = {
+                  codec: 'mp4a.40.2',
+                  sampleRate: audioTrack.audio.sample_rate,
+                  numberOfChannels: audioTrack.audio.channel_count,
+                  description: asc,
+                };
+              } else {
+                addDebugLog('WARN', 'AudioSpecificConfig抽出失敗。muxerの自動生成に任せる');
+              }
             }
           } catch (e) {
             addDebugLog('WARN', `音声description取得失敗、音声なしで続行: ${e.message}`);
@@ -571,6 +577,36 @@ async function demuxMP4(file) {
     reader.onerror = () => reject(new Error('ファイル読み込みエラー'));
     reader.readAsArrayBuffer(file);
   });
+}
+
+// esdsボックスの中身からAudioSpecificConfig（TAG 5の中身）だけを抽出する
+// mp4-muxerのesds()はdescriptionにAudioSpecificConfigのみを期待するため、
+// esds中身を丸ごと渡すと二重構造になりChromeがデコードに失敗する
+function extractAudioSpecificConfig(esdsContent) {
+  let i = 4; // version/flagsをスキップ
+  while (i < esdsContent.length) {
+    const tag = esdsContent[i];
+    // 可変長サイズ（0x80継続フラグ）
+    let len = 0;
+    let j = i + 1;
+    while (j < esdsContent.length) {
+      const b = esdsContent[j];
+      len = (len << 7) | (b & 0x7f);
+      j++;
+      if (!(b & 0x80)) break;
+    }
+    if (tag === 5) {
+      return esdsContent.slice(j, j + len); // AudioSpecificConfig本体
+    }
+    if (tag === 3) {
+      i = j + 3; // ES_Descriptor: ES_ID(2) + flags(1)をスキップして入れ子へ
+    } else if (tag === 4) {
+      i = j + 13; // DecoderConfigDescriptor: 13bytesヘッダをスキップして入れ子へ
+    } else {
+      i = j + len;
+    }
+  }
+  return null;
 }
 
 // decoder description — W3C公式サンプルと同じ方法
