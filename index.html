@@ -567,6 +567,84 @@
       opacity: 0.5;
       cursor: not-allowed;
     }
+
+    /* ===== 更新履歴 ===== */
+    .changelog {
+      width: 100%;
+      max-width: 600px;
+      margin-top: 40px;
+      margin-bottom: 20px;
+    }
+
+    .changelog h2 {
+      font-size: 1.1rem;
+      color: #e0e0e0;
+      margin-bottom: 14px;
+      border-bottom: 1px solid #333;
+      padding-bottom: 8px;
+    }
+
+    .changelog-list {
+      display: flex;
+      flex-direction: column;
+      gap: 14px;
+    }
+
+    .changelog-item {
+      display: flex;
+      gap: 14px;
+      background: #16213e;
+      border-radius: 10px;
+      padding: 14px 16px;
+    }
+
+    .changelog-date {
+      flex-shrink: 0;
+      font-weight: 700;
+      color: #7289DA;
+      font-size: 0.9rem;
+      min-width: 72px;
+    }
+
+    .changelog-body {
+      flex: 1;
+      min-width: 0;
+    }
+
+    .changelog-title {
+      font-weight: 600;
+      color: #e0e0e0;
+      font-size: 0.9rem;
+      margin-bottom: 6px;
+    }
+
+    .changelog ul {
+      list-style: none;
+      padding: 0;
+      margin: 0;
+    }
+
+    .changelog li {
+      color: #aaa;
+      font-size: 0.8rem;
+      line-height: 1.7;
+      padding-left: 14px;
+      position: relative;
+    }
+
+    .changelog li::before {
+      content: '•';
+      position: absolute;
+      left: 0;
+      color: #5865F2;
+    }
+
+    @media (max-width: 600px) {
+      .changelog-item {
+        flex-direction: column;
+        gap: 6px;
+      }
+    }
   </style>
 </head>
 <body>
@@ -639,6 +717,35 @@
     🔒 全処理はブラウザ内で完結します。サーバーへの送信は一切ありません。<br>
     Discord無料プランの添付ファイル上限（20MB）に最適化。
   </div>
+
+  <!-- ===== 更新履歴 ===== -->
+  <section class="changelog">
+    <h2>📜 更新履歴</h2>
+    <div class="changelog-list">
+      <div class="changelog-item">
+        <div class="changelog-date">2026/8/17</div>
+        <div class="changelog-body">
+          <div class="changelog-title">キャンセルボタン・プラン選択・更新履歴追加</div>
+          <ul>
+            <li>圧縮中に中断できるキャンセルボタンを追加</li>
+            <li>再圧縮のビットレート計算を実測から逆算する方式に改善（再圧縮回数削減）</li>
+            <li>Discordプラン選択（無料20MB / Nitro Basic 50MB / Nitro 500MB）で圧縮目標を切替可能に。高プランは高解像度のまま圧縮</li>
+          </ul>
+        </div>
+      </div>
+      <div class="changelog-item">
+        <div class="changelog-date">2026/8/16</div>
+        <div class="changelog-body">
+          <div class="changelog-title">運用開始</div>
+          <ul>
+            <li>画像圧縮（Rust/WASM）・動画圧縮（WebCodecs / MediaRecorder）を公開</li>
+            <li>スマホ対応のレスポンシブデザイン</li>
+            <li>Discordの上限引き上げ（10MB→20MB）に対応</li>
+          </ul>
+        </div>
+      </div>
+    </div>
+  </section>
 
   <!-- 処理中オーバーレイ -->
   <div class="processing-overlay" id="processingOverlay">
