@@ -137,7 +137,7 @@ async function compressWithWebCodecs(file, videoInfo, targetWidth, targetHeight,
   // Phase 2: MP4デマックス (5〜15%)
   onStatus?.('動画を解析中...');
   onProgress?.(8);
-  const { chunks, decoderConfig, videoTrack } = await demuxMP4(file);
+  const { chunks, audioChunks, decoderConfig, audioDecoderConfig, videoTrack } = await demuxMP4(file);
   addDebugLog('INFO', `デマックス完了: ${chunks.length}チャンク, codec=${decoderConfig.codec}`);
   onProgress?.(15);
 
@@ -201,6 +201,14 @@ async function compressWithWebCodecs(file, videoInfo, targetWidth, targetHeight,
       width: targetWidth,
       height: targetHeight,
     },
+    // 音声はAACをそのままコピー（再エンコードなし）
+    ...(audioDecoderConfig && audioChunks.length > 0 ? {
+      audio: {
+        codec: 'aac',
+        numberOfChannels: audioDecoderConfig.numberOfChannels,
+        sampleRate: audioDecoderConfig.sampleRate,
+      },
+    } : {}),
     fastStart: 'in-memory',
     firstTimestampBehavior: 'offset',
   });
@@ -321,6 +329,17 @@ async function compressWithWebCodecs(file, videoInfo, targetWidth, targetHeight,
               encoder.close();
               decoder.close();
               onProgress?.(96);
+              // ===== 音声チャンクを流し込む（AACそのままコピー）=====
+              if (audioDecoderConfig && audioChunks.length > 0) {
+                try {
+                  for (const aChunk of audioChunks) {
+                    muxer.addAudioChunk(aChunk, { decoderConfig: audioDecoderConfig });
+                  }
+                  addDebugLog('INFO', `音声追加完了: ${audioChunks.length}チャンク`);
+                } catch (e) {
+                  addDebugLog('WARN', `音声追加失敗（音声なしで続行）: ${e.message}`);
+                }
+              }
               muxer.finalize();
               onProgress?.(99);
 
@@ -393,9 +412,14 @@ async function demuxMP4(file) {
   return new Promise((resolve, reject) => {
     const mp4box = window.MP4Box.createFile();
     const chunks = [];
+    const audioChunks = [];
     let decoderConfig = null;
+    let audioDecoderConfig = null;
     let videoTrack = null;
+    let audioTrack = null;
     let lastSampleStartTime = 0;
+    let videoDone = false;
+    let audioDone = true;
 
     mp4box.onError = (e) => reject(new Error(`mp4box error: ${e}`));
 
@@ -409,6 +433,19 @@ async function demuxMP4(file) {
 
       videoTrack = info.videoTracks[0];
       addDebugLog('INFO', `映像: ${videoTrack.video.width}x${videoTrack.video.height}, codec=${videoTrack.codec}`);
+
+      // ===== 音声トラック検出（AACのみ対応）=====
+      if (info.audioTracks && info.audioTracks.length > 0) {
+        const at = info.audioTracks[0];
+        if (at.codec && at.codec.startsWith('mp4a')) {
+          audioTrack = at;
+          audioDone = false;
+          addDebugLog('INFO', `音声: AAC (${at.audio.channel_count}ch, ${at.audio.sample_rate}Hz, ${at.nb_samples}サンプル)`);
+          mp4box.setExtractionOptions(at.id, null, { nbSamples: 200 });
+        } else {
+          addDebugLog('WARN', `音声コーデック非対応のため音声なしで処理: ${at.codec}`);
+        }
+      }
 
       // デコーダ設定を準備
       mp4box.setExtractionOptions(videoTrack.id, null, {
@@ -432,6 +469,25 @@ async function demuxMP4(file) {
     };
 
     mp4box.onSamples = (trackId, ref, samples) => {
+      // ===== 音声サンプル =====
+      if (audioTrack && trackId === audioTrack.id) {
+        for (const sample of samples) {
+          audioChunks.push(new EncodedAudioChunk({
+            type: 'key',
+            timestamp: sample.cts * 1000000 / sample.timescale,
+            duration: sample.duration * 1000000 / sample.timescale,
+            data: sample.data,
+          }));
+        }
+        if (audioChunks.length >= audioTrack.nb_samples) {
+          audioDone = true;
+          addDebugLog('LOAD', `音声抽出完了: ${audioChunks.length}チャンク`);
+          checkDone();
+        }
+        return;
+      }
+
+      // ===== 映像サンプル =====
       let firstKeyFound = chunks.length > 0;
 
       for (const sample of samples) {
@@ -456,10 +512,34 @@ async function demuxMP4(file) {
 
       // 全サンプル抽出完了チェック
       if (samples.length === 0 || chunks.length >= videoTrack.nb_samples) {
-        mp4box.stop();
-        resolve({ chunks, decoderConfig, videoTrack });
+        videoDone = true;
+        checkDone();
       }
     };
+
+    function checkDone() {
+      if (videoDone && audioDone) {
+        // 音声のdecoderConfig（description）を取得
+        if (audioTrack) {
+          try {
+            const audioDesc = getDecoderDescription(mp4box, audioTrack);
+            if (audioDesc) {
+              audioDecoderConfig = {
+                codec: 'mp4a.40.2',
+                sampleRate: audioTrack.audio.sample_rate,
+                numberOfChannels: audioTrack.audio.channel_count,
+                description: audioDesc,
+              };
+            }
+          } catch (e) {
+            addDebugLog('WARN', `音声description取得失敗、音声なしで続行: ${e.message}`);
+            audioChunks.length = 0;
+          }
+        }
+        mp4box.stop();
+        resolve({ chunks, audioChunks, decoderConfig, audioDecoderConfig, videoTrack, audioTrack });
+      }
+    }
 
     // ファイルを読み込んでmp4boxに渡す
     const reader = new FileReader();
@@ -485,7 +565,8 @@ function getDecoderDescription(file, track) {
     return undefined;
   }
   for (const entry of trak.mdia.minf.stbl.stsd.entries) {
-    const box = entry.avcC || entry.hvcC || entry.vpcC || entry.av1C;
+    // 映像: avcC/hvcC/vpcC/av1C、音声: esds（AAC AudioSpecificConfig）
+    const box = entry.avcC || entry.hvcC || entry.vpcC || entry.av1C || entry.esds;
     if (box) {
       const stream = new window.MP4Box.DataStream(undefined, 0, window.MP4Box.DataStream.BIG_ENDIAN);
       box.write(stream);
@@ -494,7 +575,7 @@ function getDecoderDescription(file, track) {
       return description;
     }
   }
-  addDebugLog('WARN', 'avcC/hvcC/vpcC/av1C boxが見つかりません');
+  addDebugLog('WARN', 'avcC/hvcC/vpcC/av1C/esds boxが見つかりません');
   return undefined;
 }
 
