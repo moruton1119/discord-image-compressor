@@ -68,7 +68,7 @@ async function ensureWasm() {
     if (typeof init !== 'function') {
       throw new Error(`init関数が見つかりません。default=${typeof wasmModule.default}, keys=${Object.keys(wasmModule).join(',')}`);
     }
-    await init('./image_compressor_bg.wasm');
+    await init({ module_or_path: './image_compressor_bg.wasm' });
     compressor = new wasmModule.ImageCompressor();
     wasmReady = true;
     console.log('🦀 Rust/WASM エンジン初期化完了!');
