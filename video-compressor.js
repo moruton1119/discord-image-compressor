@@ -141,6 +141,24 @@ async function compressWithWebCodecs(file, videoInfo, targetWidth, targetHeight,
   addDebugLog('INFO', `デマックス完了: ${chunks.length}チャンク, codec=${decoderConfig.codec}`);
   onProgress?.(15);
 
+  // ===== 音込みの正確なビットレート計算 =====
+  // 音声は元のAACをそのままコピーするため、実際の音声サイズを映像ビットレートから差し引く
+  // （従来は音声64kbps固定と仮定していたため、音声が大きい動画で目標を超過していた）
+  let audioTotalBytes = 0;
+  if (audioDecoderConfig && audioChunks.length > 0) {
+    audioTotalBytes = audioChunks.reduce((sum, c) => sum + c.byteLength, 0);
+    if (attempt === 0) {
+      // 初回のみ：音声実サイズで映像ビットレートを再計算
+      // （再帰時は渡ってきた逆算値＝VBRブレ補正済みを優先すべきなので再計算しない）
+      const durationSec = Math.max(1, videoInfo.duration);
+      const recalc = Math.floor(((ACCEPT_SIZE_BYTES - audioTotalBytes) * 8) / durationSec);
+      addDebugLog('INFO', `音声実サイズ: ${(audioTotalBytes / 1048576).toFixed(2)}MB。映像ビットレートを ${(videoBitrate / 1000).toFixed(0)}kbps → ${(Math.max(100000, recalc) / 1000).toFixed(0)}kbps に再計算（音込み）`);
+      videoBitrate = Math.max(100000, recalc);
+    } else {
+      addDebugLog('INFO', `音声実サイズ: ${(audioTotalBytes / 1048576).toFixed(2)}MB（再試行${attempt + 1}回目は逆算値 ${(videoBitrate / 1000).toFixed(0)}kbps を使用）`);
+    }
+  }
+
   // Step 2: デコーダ設定（GPUデコーダを優先して速度アップ）
   decoderConfig.hardwareAcceleration = 'prefer-hardware';
   let supported = await VideoDecoder.isConfigSupported(decoderConfig);
@@ -357,9 +375,9 @@ async function compressWithWebCodecs(file, videoInfo, targetWidth, targetHeight,
                   return;
                 }
                 addDebugLog('WARN', `サイズ超過 (${(blob.size / 1024 / 1024).toFixed(2)}MB > ${TARGET_SIZE_MB}MB)。実測から逆算して再圧縮...`);
-                // 実測オーバー率から逆算（0.95は安全係数）
-                const overshootRatio = blob.size / ACCEPT_SIZE_BYTES;
-                const lowerBitrate = Math.max(50000, Math.floor(videoBitrate * 0.95 / overshootRatio));
+                // 実測オーバー率から逆算（0.95は安全係数）※音声分を差し引いて映像のみで計算
+                const videoActualBytes = Math.max(1, blob.size - audioTotalBytes);
+                const lowerBitrate = Math.max(50000, Math.floor(videoBitrate * 0.95 * (ACCEPT_SIZE_BYTES - audioTotalBytes) / videoActualBytes));
                 const smallerWidth = Math.max(320, Math.round(targetWidth * 0.75 / 2) * 2);
                 const smallerHeight = Math.max(240, Math.round(targetHeight * 0.75 / 2) * 2);
                 onStatus?.(`品質を調整中... (${attempt + 2}/${MAX_ATTEMPTS}回目)`);
