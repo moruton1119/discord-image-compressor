@@ -133,6 +133,22 @@ const videoUploadArea = document.getElementById('videoUploadArea');
 const videoInput = document.getElementById('videoInput');
 const videoResults = document.getElementById('videoResults');
 
+// ===== キャンセル制御 =====
+const cancelBtn = document.getElementById('cancelBtn');
+let videoCompressorModule = null;
+
+cancelBtn.addEventListener('click', () => {
+  if (!videoCompressorModule) return;
+  cancelBtn.disabled = true;
+  cancelBtn.textContent = 'キャンセル中...';
+  videoCompressorModule.requestCancel();
+});
+
+function resetCancelButton() {
+  cancelBtn.disabled = false;
+  cancelBtn.textContent = '✕ キャンセル';
+}
+
 videoUploadArea.addEventListener('click', () => {
   console.log('[VIDEO] 動画エリアクリック');
   if (!isProcessing) videoInput.click();
@@ -189,7 +205,9 @@ async function handleVideo(file) {
     //   dp.appendChild(line);
     // }
 
-    const { compressVideo } = await import('./video-compressor.js');
+    const mod = await import('./video-compressor.js');
+    videoCompressorModule = mod;
+    const { compressVideo } = mod;
     console.log('[VIDEO] イポート完了、圧縮開始...');
 
     const result = await compressVideo(
@@ -210,10 +228,16 @@ async function handleVideo(file) {
     //   line.textContent = `[${t}] [ERROR] 動画圧縮失敗: ${err.message || err}\nStack: ${err.stack || 'no stack'}`;
     //   dp.appendChild(line);
     // }
-    addErrorCard(videoResults, file, err.message);
+    // キャンセルの場合はエラーカードを出さない
+    if (err && err.message === 'キャンセルされました') {
+      console.log('[VIDEO] ユーザーによりキャンセルされました');
+    } else {
+      addErrorCard(videoResults, file, err.message);
+    }
   }
 
   finishProcessing();
+  resetCancelButton();
   videoInput.value = '';
 }
 

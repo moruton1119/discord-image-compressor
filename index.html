@@ -544,6 +544,29 @@
         gap: 8px;
       }
     }
+
+    /* ===== キャンセルボタン ===== */
+    .cancel-btn {
+      margin-top: 16px;
+      padding: 10px 28px;
+      background: transparent;
+      border: 1px solid #f04747;
+      border-radius: 8px;
+      color: #f04747;
+      font-size: 0.9rem;
+      font-weight: 600;
+      cursor: pointer;
+      transition: all 0.2s;
+    }
+
+    .cancel-btn:hover:not(:disabled) {
+      background: rgba(240, 71, 71, 0.15);
+    }
+
+    .cancel-btn:disabled {
+      opacity: 0.5;
+      cursor: not-allowed;
+    }
   </style>
 </head>
 <body>
@@ -616,6 +639,7 @@
     </div>
     <div class="progress-percent" id="progressPercent" style="margin-top: 8px; font-weight: bold; color: #fff;">0%</div>
     <div class="file-counter" id="fileCounter"></div>
+    <button class="cancel-btn" id="cancelBtn">✕ キャンセル</button>
   </div>
 
   <!-- デバッグパネル（廃止：ログ不要のため）

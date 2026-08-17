@@ -13,6 +13,17 @@ const TARGET_SIZE_BYTES = TARGET_SIZE_MB * 1024 * 1024;
 // 安全マージンを見て18MBを目標にする
 const ACCEPT_SIZE_BYTES = 18 * 1024 * 1024;
 
+// ============ キャンセル制御 ============
+let cancelRequested = false;
+
+export function requestCancel() {
+  cancelRequested = true;
+}
+
+// 再圧縮の最大試行回数（1回目＋再試行2回＝計3回）
+const MAX_ATTEMPTS = 3;
+export const CANCEL_MESSAGE = 'キャンセルされました';
+
 // ============ デバッグログ（パネル表示は廃止・consoleのみ） ============
 function addDebugLog(level, message) {
   const time = new Date().toLocaleTimeString();
@@ -40,6 +51,9 @@ function getEngine() {
 // ============ 動画圧縮メイン ============
 
 export async function compressVideo(file, onProgress, onStatus) {
+  // キャンセル状態をリセット
+  cancelRequested = false;
+
   addDebugLog('INFO', `動画圧縮開始: ${file.name}`);
   addDebugLog('INFO', `ファイルサイズ: ${(file.size / 1024 / 1024).toFixed(2)} MB`);
   addDebugLog('INFO', `MIME Type: ${file.type}`);
@@ -79,14 +93,16 @@ export async function compressVideo(file, onProgress, onStatus) {
 
   if (engine === 'webcodecs') {
     try {
-      return await compressWithWebCodecs(file, videoInfo, targetWidth, targetHeight, targetVideoBitrate, onProgress, onStatus);
+      return await compressWithWebCodecs(file, videoInfo, targetWidth, targetHeight, targetVideoBitrate, onProgress, onStatus, 0);
     } catch (err) {
+      // キャンセル時はフォールバックしない
+      if (cancelRequested || err.message === CANCEL_MESSAGE) throw err;
       addDebugLog('WARN', `WebCodecs失敗、MediaRecorderにフォールバック: ${err.message}`);
       // フォールバック
-      return await compressWithMediaRecorder(file, videoInfo, targetWidth, targetHeight, targetVideoBitrate, audioBitrate, onProgress, onStatus);
+      return await compressWithMediaRecorder(file, videoInfo, targetWidth, targetHeight, targetVideoBitrate, audioBitrate, onProgress, onStatus, 0);
     }
   } else {
-    return await compressWithMediaRecorder(file, videoInfo, targetWidth, targetHeight, targetVideoBitrate, audioBitrate, onProgress, onStatus);
+    return await compressWithMediaRecorder(file, videoInfo, targetWidth, targetHeight, targetVideoBitrate, audioBitrate, onProgress, onStatus, 0);
   }
 }
 
@@ -94,7 +110,8 @@ export async function compressVideo(file, onProgress, onStatus) {
 //  WebCodecs エンジン（爆速・ハードウェア）
 // ============================================================
 
-async function compressWithWebCodecs(file, videoInfo, targetWidth, targetHeight, videoBitrate, onProgress, onStatus) {
+async function compressWithWebCodecs(file, videoInfo, targetWidth, targetHeight, videoBitrate, onProgress, onStatus, attempt = 0) {
+  if (cancelRequested) throw new Error(CANCEL_MESSAGE);
   addDebugLog('LOAD', 'WebCodecs エンジン起動...');
 
   // Phase 1: ライブラリ読み込み (0〜5%)
@@ -199,6 +216,15 @@ async function compressWithWebCodecs(file, videoInfo, targetWidth, targetHeight,
     // デコーダ
     decoder = new VideoDecoder({
       output: (frame) => {
+        // キャンセルチェック
+        if (cancelRequested) {
+          frame.close();
+          try { encoder.close(); } catch (e) {}
+          try { decoder.close(); } catch (e) {}
+          reject(new Error(CANCEL_MESSAGE));
+          return;
+        }
+
         const idx = decodedFrameIndices.shift();
 
         // Canvas経由でリサイズ
@@ -245,11 +271,21 @@ async function compressWithWebCodecs(file, videoInfo, targetWidth, targetHeight,
               onProgress?.(100);
 
               if (blob.size > TARGET_SIZE_BYTES) {
-                addDebugLog('WARN', `サイズ超過 (${(blob.size / 1024 / 1024).toFixed(2)}MB > ${TARGET_SIZE_MB}MB)。ビットレートを下げて再圧縮...`);
-                const lowerBitrate = Math.floor(videoBitrate * 0.5);
+                // キャンセルチェック
+                if (cancelRequested) { reject(new Error(CANCEL_MESSAGE)); return; }
+                // 試行回数上限
+                if (attempt + 1 >= MAX_ATTEMPTS) {
+                  reject(new Error(`${MAX_ATTEMPTS}回試行しましたが${TARGET_SIZE_MB}MB以下に圧縮できませんでした。動画が長すぎる可能性があります`));
+                  return;
+                }
+                addDebugLog('WARN', `サイズ超過 (${(blob.size / 1024 / 1024).toFixed(2)}MB > ${TARGET_SIZE_MB}MB)。実測から逆算して再圧縮...`);
+                // 実測オーバー率から逆算（0.95は安全係数）
+                const overshootRatio = blob.size / ACCEPT_SIZE_BYTES;
+                const lowerBitrate = Math.max(50000, Math.floor(videoBitrate * 0.95 / overshootRatio));
                 const smallerWidth = Math.max(320, Math.round(targetWidth * 0.75 / 2) * 2);
                 const smallerHeight = Math.max(240, Math.round(targetHeight * 0.75 / 2) * 2);
-                compressWithWebCodecs(file, videoInfo, smallerWidth, smallerHeight, lowerBitrate, onProgress, onStatus)
+                onStatus?.(`品質を調整中... (${attempt + 2}/${MAX_ATTEMPTS}回目)`);
+                compressWithWebCodecs(file, videoInfo, smallerWidth, smallerHeight, lowerBitrate, onProgress, onStatus, attempt + 1)
                   .then(resolve).catch(reject);
               } else {
                 resolve({ blob, originalSize: file.size, compressedSize: blob.size });
@@ -268,8 +304,10 @@ async function compressWithWebCodecs(file, videoInfo, targetWidth, targetHeight,
     // チャンクを順次デコード（バックプレッシャー制御）
     async function feedChunks() {
       for (let i = 0; i < chunks.length; i++) {
+        if (cancelRequested) throw new Error(CANCEL_MESSAGE);
         // デコーダのキューが溜まりすぎたら待つ
         while (decoder.decodeQueueSize > 15) {
+          if (cancelRequested) throw new Error(CANCEL_MESSAGE);
           await new Promise(r => setTimeout(r, 5));
         }
         // エンコーダのキューもチェック
@@ -403,7 +441,8 @@ function getDecoderDescription(file, track) {
 
 // ============ MediaRecorder エンジン（フォールバック） ============
 
-async function compressWithMediaRecorder(file, videoInfo, targetWidth, targetHeight, videoBitrate, audioBitrate, onProgress, onStatus) {
+async function compressWithMediaRecorder(file, videoInfo, targetWidth, targetHeight, videoBitrate, audioBitrate, onProgress, onStatus, attempt = 0) {
+  if (cancelRequested) throw new Error(CANCEL_MESSAGE);
   addDebugLog('LOAD', 'MediaRecorder エンジン起動（フォールバック）...');
 
   const video = document.createElement('video');
@@ -470,6 +509,12 @@ async function compressWithMediaRecorder(file, videoInfo, targetWidth, targetHei
   let frameCount = 0;
 
   function drawFrame() {
+    // キャンセルチェック
+    if (cancelRequested) {
+      video.pause();
+      if (recorder.state !== 'inactive') recorder.stop();
+      return;
+    }
     if (video.ended || recorder.state === 'inactive') return;
     ctx.drawImage(video, 0, 0, targetWidth, targetHeight);
     frameCount++;
@@ -486,25 +531,35 @@ async function compressWithMediaRecorder(file, videoInfo, targetWidth, targetHei
   requestAnimationFrame(drawFrame);
 
   await new Promise((resolve) => {
+    recorder.onstop = () => resolve();
     video.onended = () => {
-      recorder.stop();
-      recorder.onstop = () => resolve();
+      if (recorder.state !== 'inactive') recorder.stop();
     };
   });
 
   URL.revokeObjectURL(video.src);
   audioCtx.close();
 
+  // キャンセルされていたらここで中断
+  if (cancelRequested) throw new Error(CANCEL_MESSAGE);
+
   const blob = new Blob(chunks, { type: mimeType });
   onProgress?.(100);
   addDebugLog('INFO', `MediaRecorder圧縮完了: ${(file.size / 1024 / 1024).toFixed(2)}MB → ${(blob.size / 1024 / 1024).toFixed(2)}MB`);
 
   if (blob.size > TARGET_SIZE_BYTES) {
-    addDebugLog('WARN', `サイズ超過 (${(blob.size / 1024 / 1024).toFixed(2)}MB > ${TARGET_SIZE_MB}MB)。再圧縮...`);
-    const lowerBitrate = Math.floor(videoBitrate * 0.5);
+    // 試行回数上限
+    if (attempt + 1 >= MAX_ATTEMPTS) {
+      throw new Error(`${MAX_ATTEMPTS}回試行しましたが${TARGET_SIZE_MB}MB以下に圧縮できませんでした。動画が長すぎる可能性があります`);
+    }
+    addDebugLog('WARN', `サイズ超過 (${(blob.size / 1024 / 1024).toFixed(2)}MB > ${TARGET_SIZE_MB}MB)。実測から逆算して再圧縮...`);
+    // 実測オーバー率から逆算（0.95は安全係数）
+    const overshootRatio = blob.size / ACCEPT_SIZE_BYTES;
+    const lowerBitrate = Math.max(50000, Math.floor(videoBitrate * 0.95 / overshootRatio));
     const smallerWidth = Math.max(320, Math.round(targetWidth * 0.75 / 2) * 2);
     const smallerHeight = Math.max(240, Math.round(targetHeight * 0.75 / 2) * 2);
-    return await compressWithMediaRecorder(file, videoInfo, smallerWidth, smallerHeight, lowerBitrate, audioBitrate, onProgress, onStatus);
+    onStatus?.(`品質を調整中... (${attempt + 2}/${MAX_ATTEMPTS}回目)`);
+    return await compressWithMediaRecorder(file, videoInfo, smallerWidth, smallerHeight, lowerBitrate, audioBitrate, onProgress, onStatus, attempt + 1);
   }
 
   return { blob, originalSize: file.size, compressedSize: blob.size };
