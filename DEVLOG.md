@@ -257,20 +257,24 @@ for (const entry of trak.mdia.minf.stbl.stsd.entries) {
 ### 画像圧縮
 - 🦀 **Rust/WASM**（wasm-pack `--target web`）
 - Canvas API + Rustによるバイナリサーチ圧縮
-- WebP / JPEG / PNG 切替可能
+- WebP / JPEG 切替可能（PNGは可逆のため非対応）
 - EXIF/メタデータ全削除
+- 目標サイズはDiscordプラン選択に追従（無料20/Basic 50/Nitro 500MB）
 
 ### 動画圧縮
 - 🎬 **WebCodecs API**（メインエンジン）
-  - mp4box.jsでMP4デマックス（同梱）
-  - VideoDecoderでハードウェアデコード（HEVC/H.264対応）
-  - Canvas経由でリサイズ
-  - VideoEncoderでハードウェアH.264エンコード（CBR）
+  - mp4box.jsでMP4デマックス（同梱・先読み並行読込）
+  - VideoDecoder（`prefer-hardware`・HEVC/H.264対応・非対応はソフトへフォールバック）
+  - Canvas経由でリサイズ＋回転（rotation 90°焼き込み）
+  - VideoEncoder（`prefer-hardware`・H.264・VBR・`latencyMode: 'quality'`）
   - mp4-muxerでMP4格納（同梱）
+  - 実測オーバー率逆算リトライ（最大3回・妥協DL対応）
+  - キャンセル対応
 - 🎥 **Canvas + MediaRecorder**（フォールバック）
   - WebCodecs非対応環境向け自動切替
   - 2〜4倍速再生で処理短縮
-- 自動ビットレート計算（目標8MB・安全マージン）
+- 自動ビットレート計算（プラン別目標・安全マージン5%）
+- 解像度ダウンスケール（無料1280/Basic 1920/Nitro元解像度）
 - 目標サイズ以下のファイルは圧縮スキップ（品質保持）
 
 ### インフラ
@@ -351,3 +355,32 @@ for (const entry of trak.mdia.minf.stbl.stsd.entries) {
 - [ ] WebM → MP4 変換オプション
 - [ ] 圧縮プリセット（高速/高品質）
 - [ ] PWA対応（オフライン動作）
+
+---
+
+## Phase 5: 運用改善・外部コントリビューション（2026-08-17）
+
+### 機能追加（もるとん・ネオン）
+
+- **キャンセルボタン**: 圧縮中の中断機能。WebCodecsはフレーム処理/キュー待機/再圧縮直前の3箇所、MediaRecorderは描画ループでチェック
+- **実測逆算リトライ**: 従来の「ビットレート0.5倍乱暴カット」を廃止し、1回目の実測オーバー率から逆算（`新bitrate = bitrate × 0.95 × 目標/実測`）→再圧縮2回で収束、最大3回で打ち切り＋妥協DL対応
+- **Discordプラン選択**: 無料20MB/Basic 50MB/Nitro 500MBで目標サイズと解像度上限（1280/1920/元解像度）を切替
+- **縦動画歪み修正**: rotation 90°メタデータ未処理が原因。`<video>`要素サイズ（回転後）とWebCodecsフレーム（回転前）の縦横不一致を検出し、Canvasに90°回転描画で焼き込み
+- **更新履歴（changelog）**: ページ内に表示。機能追加のたびに追記する運用
+
+### 外部コントリビューション: PR #1（uni4565-jp氏）
+
+初の外部PR。動画圧縮の速度・画質改善：
+- `hardwareAcceleration: 'prefer-hardware'`（GPU優先、非対応はソフトフォールバック）
+- `bitrateMode: 'constant'` → `'variable'`（VBR）＋ `latencyMode: 'quality'`
+- mp4box.js / mp4-muxer の先読み並行読み込み
+- バックプレッシャー閾値緩和（15→30、5ms→2ms）
+- 安全マージン10%→5%
+
+**検証**（作者が未検証のためこちらで実施）:
+- 構文チェック・既存機能（rotation/逆算リトライ/キャンセル）との整合確認 ✅
+- E2Eテスト（Playwright・目標1MBで実際に圧縮実行）✅
+- ヘッドレス/GPUなし環境でのHW→SWフォールバック動作 ✅
+- VBRのサイズ変動は実測逆算リトライで吸収できることを確認 ✅
+
+**知見:** VBRはシーン依存でファイルサイズが変動するため、単発ビットレート計算での目標ヒット率は下がる。しかし「実測→逆算→リトライ」構成ならVBRの変動を自律吸収でき、画質向上の恩恵だけ得られる。CBR前提の設計にVBRを導入する場合は再試行機構の有無が判断基準になる。

@@ -725,6 +725,18 @@
       <div class="changelog-item">
         <div class="changelog-date">2026/8/17</div>
         <div class="changelog-body">
+          <div class="changelog-title">外部コントリビューターによる性能改善</div>
+          <ul>
+            <li>GPU（ハードウェア）エンコード/デコードを優先使用。非対応環境では自動フォールバック</li>
+            <li>ビットレート方式をCBR→VBRに変更。同じサイズでもシーンごとに賢くビット配分して画質向上</li>
+            <li>ライブラリ先読み・エンコード待ち時間の短縮</li>
+            <li>安全マージンを10%→5%に縮小し、その分ビットレート（画質）を引き上げ</li>
+          </ul>
+        </div>
+      </div>
+      <div class="changelog-item">
+        <div class="changelog-date">2026/8/17</div>
+        <div class="changelog-body">
           <div class="changelog-title">キャンセルボタン・プラン選択・更新履歴追加</div>
           <ul>
             <li>圧縮中に中断できるキャンセルボタンを追加</li>
