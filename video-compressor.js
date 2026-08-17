@@ -209,6 +209,8 @@ async function compressWithWebCodecs(file, videoInfo, targetWidth, targetHeight,
     let allChunksSubmitted = false;
     let decodedFrameIndices = [];
     let encoderFinished = false;
+    let rotationChecked = false;
+    let isRotated = false;
 
     // エンコーダ
     encoder = new VideoEncoder({
@@ -237,13 +239,41 @@ async function compressWithWebCodecs(file, videoInfo, targetWidth, targetHeight,
 
         const idx = decodedFrameIndices.shift();
 
-        // Canvas経由でリサイズ
-        if (targetWidth !== videoInfo.width || targetHeight !== videoInfo.height) {
-          ctx.drawImage(frame, 0, 0, targetWidth, targetHeight);
+        // ===== 回転メタデータ検出（スマホ縦動画対応）=====
+        // <video>要素のサイズ（回転適用後）とデコードフレームの実サイズ（回転前）が
+        // 縦横入れ替わっていたら、rotation 90°付きの動画
+        if (!rotationChecked) {
+          rotationChecked = true;
+          if (frame.displayWidth === videoInfo.height &&
+              frame.displayHeight === videoInfo.width &&
+              frame.displayWidth !== frame.displayHeight) {
+            isRotated = true;
+            addDebugLog('INFO', `回転メタデータ検出: フレーム実サイズ ${frame.displayWidth}x${frame.displayHeight}（回転前）→ 90°回転して描画`);
+          }
+        }
+
+        // リサイズまたは回転が必要ならCanvas経由
+        const needsCanvas = (targetWidth !== videoInfo.width || targetHeight !== videoInfo.height) || isRotated;
+        if (needsCanvas) {
+          const ts = frame.timestamp;
+          const dur = frame.duration;
+          if (isRotated) {
+            // 90°回転して描画（rotationメタデータをピクセルに焼き込む）
+            const rawW = frame.displayWidth;
+            const rawH = frame.displayHeight;
+            const s = targetWidth / rawH;
+            ctx.save();
+            ctx.translate(targetWidth / 2, targetHeight / 2);
+            ctx.rotate(Math.PI / 2);
+            ctx.drawImage(frame, -rawW * s / 2, -rawH * s / 2, rawW * s, rawH * s);
+            ctx.restore();
+          } else {
+            ctx.drawImage(frame, 0, 0, targetWidth, targetHeight);
+          }
           frame.close();
           const resizedFrame = new VideoFrame(canvas, {
-            timestamp: frame.timestamp,
-            duration: frame.duration,
+            timestamp: ts,
+            duration: dur,
           });
           encoder.encode(resizedFrame, { keyFrame: idx % 60 === 0 });
           resizedFrame.close();
