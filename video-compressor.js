@@ -141,7 +141,7 @@ async function compressWithWebCodecs(file, videoInfo, targetWidth, targetHeight,
   onStatus?.('動画を解析中...');
   onProgress?.(8);
   const { chunks, audioChunks, decoderConfig, audioDecoderConfig, videoTrack } = await demuxMP4(file);
-  addDebugLog('INFO', `デマックス完了: ${chunks.length}チャンク, codec=${decoderConfig.codec}`);
+  addDebugLog('INFO', `MP4解析完了: 映像${chunks.length}チャンク${audioChunks.length > 0 ? ` + 音声${audioChunks.length}チャンク` : '（音声なし）'}`);
   onProgress?.(15);
 
   // ===== 音込みの正確なビットレート計算 =====
@@ -356,7 +356,7 @@ async function compressWithWebCodecs(file, videoInfo, targetWidth, targetHeight,
                   for (const aChunk of audioChunks) {
                     muxer.addAudioChunk(aChunk, { decoderConfig: audioDecoderConfig });
                   }
-                  addDebugLog('INFO', `音声追加完了: ${audioChunks.length}チャンク`);
+                  addDebugLog('INFO', `音声を出力に追加: ${audioChunks.length}チャンク (${(audioTotalBytes / 1048576).toFixed(2)}MB)`);
                 } catch (e) {
                   addDebugLog('WARN', `音声追加失敗（音声なしで続行）: ${e.message}`);
                 }
@@ -445,8 +445,6 @@ async function demuxMP4(file) {
     mp4box.onError = (e) => reject(new Error(`mp4box error: ${e}`));
 
     mp4box.onReady = (info) => {
-      addDebugLog('LOAD', `MP4情報: ${info.videoTracks?.length || 0}映像トラック, ${info.audioTracks?.length || 0}音声トラック`);
-      
       if (!info.videoTracks || info.videoTracks.length === 0) {
         reject(new Error('映像トラックが見つかりません'));
         return;
@@ -461,11 +459,13 @@ async function demuxMP4(file) {
         if (at.codec && at.codec.startsWith('mp4a')) {
           audioTrack = at;
           audioDone = false;
-          addDebugLog('INFO', `音声: AAC (${at.audio.channel_count}ch, ${at.audio.sample_rate}Hz, ${at.nb_samples}サンプル)`);
+          addDebugLog('INFO', `元動画の音声: AAC ${at.audio.channel_count}ch ${at.audio.sample_rate}Hz → そのまま出力にコピー`);
           mp4box.setExtractionOptions(at.id, null, { nbSamples: 200 });
         } else {
-          addDebugLog('WARN', `音声コーデック非対応のため音声なしで処理: ${at.codec}`);
+          addDebugLog('WARN', `元動画の音声は${at.codec}形式（非対応）→ 音声なしで出力されます`);
         }
+      } else {
+        addDebugLog('WARN', '元動画に音声トラックがありません（無音で出力）');
       }
 
       // デコーダ設定を準備
@@ -501,7 +501,6 @@ async function demuxMP4(file) {
         }
         if (audioChunks.length >= audioTrack.nb_samples) {
           audioDone = true;
-          addDebugLog('LOAD', `音声抽出完了: ${audioChunks.length}チャンク`);
           checkDone();
         }
         return;
