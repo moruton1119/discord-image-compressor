@@ -10,12 +10,12 @@
 // 無料: 20MB / Nitro Basic: 50MB / Nitro: 500MB
 let TARGET_SIZE_MB = 20;
 let TARGET_SIZE_BYTES = TARGET_SIZE_MB * 1024 * 1024;
-let ACCEPT_SIZE_BYTES = 18 * 1024 * 1024; // 10%の安全マージン
+let ACCEPT_SIZE_BYTES = 19 * 1024 * 1024; // 安全マージンを10%→5%に縮小し、その分ビットレートを高くする
 
 function applyTargetSize(mb) {
   TARGET_SIZE_MB = mb;
   TARGET_SIZE_BYTES = mb * 1024 * 1024;
-  ACCEPT_SIZE_BYTES = Math.floor(mb * 0.9) * 1024 * 1024;
+  ACCEPT_SIZE_BYTES = Math.floor(mb * 0.95) * 1024 * 1024;
 }
 
 // ============ キャンセル制御 ============
@@ -69,7 +69,9 @@ export async function compressVideo(file, onProgress, onStatus, targetSizeMB = 2
   const engine = getEngine();
   addDebugLog('INFO', `エンジン: ${engine}`);
 
-  // 動画メタデータ取得
+  // 動画メタデータ取得と並行してWebCodecs用ライブラリの読み込みを開始する
+  const libsPreload = engine === 'webcodecs' ? preloadWebCodecsLibs() : null;
+
   onStatus?.('動画情報を解析中...');
   const videoInfo = await getVideoInfo(file);
   addDebugLog('INFO', `解像度: ${videoInfo.width}x${videoInfo.height}`);
@@ -82,7 +84,7 @@ export async function compressVideo(file, onProgress, onStatus, targetSizeMB = 2
     return { blob: file, originalSize: file.size, compressedSize: file.size };
   }
 
-  // 目標ビットレート計算（ACCEPT_SIZE_BYTES基準＝18MB、安全マージン込み）
+  // 目標ビットレート計算（ACCEPT_SIZE_BYTES基準、安全マージン込み）
   const audioBitrate = 64000;
   const targetTotalBitrate = Math.floor((ACCEPT_SIZE_BYTES * 8) / videoInfo.duration);
   const targetVideoBitrate = Math.max(100000, targetTotalBitrate - audioBitrate);
@@ -103,7 +105,7 @@ export async function compressVideo(file, onProgress, onStatus, targetSizeMB = 2
 
   if (engine === 'webcodecs') {
     try {
-      return await compressWithWebCodecs(file, videoInfo, targetWidth, targetHeight, targetVideoBitrate, onProgress, onStatus, 0);
+      return await compressWithWebCodecs(file, videoInfo, targetWidth, targetHeight, targetVideoBitrate, onProgress, onStatus, 0, libsPreload);
     } catch (err) {
       // キャンセル時はフォールバックしない
       if (cancelRequested || err.message === CANCEL_MESSAGE) throw err;
@@ -120,20 +122,16 @@ export async function compressVideo(file, onProgress, onStatus, targetSizeMB = 2
 //  WebCodecs エンジン（爆速・ハードウェア）
 // ============================================================
 
-async function compressWithWebCodecs(file, videoInfo, targetWidth, targetHeight, videoBitrate, onProgress, onStatus, attempt = 0) {
+async function compressWithWebCodecs(file, videoInfo, targetWidth, targetHeight, videoBitrate, onProgress, onStatus, attempt = 0, libsPreload = null) {
   if (cancelRequested) throw new Error(CANCEL_MESSAGE);
   addDebugLog('LOAD', 'WebCodecs エンジン起動...');
 
   // Phase 1: ライブラリ読み込み (0〜5%)
+  // 先読みしておいたPromiseを待つ（再試行時はキャッシュ済みのため即座に解決する）
   onStatus?.('MP4パーサーを読み込み中...');
   onProgress?.(2);
-  const mp4boxModule = await import('./vendor/mp4box.all.mjs');
-  window.MP4Box = mp4boxModule;
-  addDebugLog('LOAD', 'mp4box.js 読み込みOK（同梱）');
-  onProgress?.(4);
-
-  await loadScript('./vendor/mp4-muxer.js');
-  addDebugLog('LOAD', 'mp4-muxer 読み込みOK（同梱）');
+  await (libsPreload || preloadWebCodecsLibs());
+  addDebugLog('LOAD', 'mp4box.js / mp4-muxer 読み込みOK（同梱・先読み済み）');
   onProgress?.(5);
 
   // Phase 2: MP4デマックス (5〜15%)
@@ -143,8 +141,13 @@ async function compressWithWebCodecs(file, videoInfo, targetWidth, targetHeight,
   addDebugLog('INFO', `デマックス完了: ${chunks.length}チャンク, codec=${decoderConfig.codec}`);
   onProgress?.(15);
 
-  // Step 2: デコーダ設定
-  const supported = await VideoDecoder.isConfigSupported(decoderConfig);
+  // Step 2: デコーダ設定（GPUデコーダを優先して速度アップ）
+  decoderConfig.hardwareAcceleration = 'prefer-hardware';
+  let supported = await VideoDecoder.isConfigSupported(decoderConfig);
+  if (!supported.supported) {
+    decoderConfig.hardwareAcceleration = 'prefer-software';
+    supported = await VideoDecoder.isConfigSupported(decoderConfig);
+  }
   if (!supported.supported) {
     throw new Error(`デコーダ非対応: ${decoderConfig.codec}`);
   }
@@ -157,18 +160,33 @@ async function compressWithWebCodecs(file, videoInfo, targetWidth, targetHeight,
     height: targetHeight,
     bitrate: videoBitrate,
     framerate: videoInfo.fps,
-    bitrateMode: 'constant',  // CBRでサイズを確実に制御
+    // VBRにより同じ平均ビットレートでもシーンに応じてビット配分を最適化する
+    bitrateMode: 'variable',
+    // 'quality' はリアルタイム制約を外し、圧縮効率（画質/ビットレート）を優先するモード
+    latencyMode: 'quality',
+    // GPUエンコーダを優先する（非対応環境ではソフトウェアエンコーダに切り替える）
+    hardwareAcceleration: 'prefer-hardware',
   };
-  const encSupported = await VideoEncoder.isConfigSupported(encoderConfig);
+  let encSupported = await VideoEncoder.isConfigSupported(encoderConfig);
+  if (!encSupported.supported) {
+    // ハードウェアエンコーダが無ければソフトウェアで再試行
+    encoderConfig.hardwareAcceleration = 'prefer-software';
+    encSupported = await VideoEncoder.isConfigSupported(encoderConfig);
+  }
   if (!encSupported.supported) {
     // 別のプロファイルを試す
     encoderConfig.codec = 'avc1.42001f'; // Baseline Level 3.1
-    const encSupported2 = await VideoEncoder.isConfigSupported(encoderConfig);
+    encoderConfig.hardwareAcceleration = 'prefer-hardware';
+    let encSupported2 = await VideoEncoder.isConfigSupported(encoderConfig);
+    if (!encSupported2.supported) {
+      encoderConfig.hardwareAcceleration = 'prefer-software';
+      encSupported2 = await VideoEncoder.isConfigSupported(encoderConfig);
+    }
     if (!encSupported2.supported) {
       throw new Error('H.264エンコーダ非対応');
     }
   }
-  addDebugLog('INFO', `エンコーダ設定: codec=${encoderConfig.codec}, ${targetWidth}x${targetHeight}, ${(videoBitrate / 1000).toFixed(0)}kbps`);
+  addDebugLog('INFO', `エンコーダ設定: codec=${encoderConfig.codec}, ${targetWidth}x${targetHeight}, ${(videoBitrate / 1000).toFixed(0)}kbps, hw=${encoderConfig.hardwareAcceleration}`);
   onProgress?.(18);
 
   // Step 4: Muxer設定（mp4-muxer）
@@ -326,7 +344,7 @@ async function compressWithWebCodecs(file, videoInfo, targetWidth, targetHeight,
                 const smallerWidth = Math.max(320, Math.round(targetWidth * 0.75 / 2) * 2);
                 const smallerHeight = Math.max(240, Math.round(targetHeight * 0.75 / 2) * 2);
                 onStatus?.(`品質を調整中... (${attempt + 2}/${MAX_ATTEMPTS}回目)`);
-                compressWithWebCodecs(file, videoInfo, smallerWidth, smallerHeight, lowerBitrate, onProgress, onStatus, attempt + 1)
+                compressWithWebCodecs(file, videoInfo, smallerWidth, smallerHeight, lowerBitrate, onProgress, onStatus, attempt + 1, libsPreload)
                   .then(resolve).catch(reject);
               } else {
                 resolve({ blob, originalSize: file.size, compressedSize: blob.size });
@@ -346,14 +364,14 @@ async function compressWithWebCodecs(file, videoInfo, targetWidth, targetHeight,
     async function feedChunks() {
       for (let i = 0; i < chunks.length; i++) {
         if (cancelRequested) throw new Error(CANCEL_MESSAGE);
-        // デコーダのキューが溜まりすぎたら待つ
-        while (decoder.decodeQueueSize > 15) {
+        // デコーダのキューが溜まりすぎたら待つ（上限とポーリング間隔を調整）
+        while (decoder.decodeQueueSize > 30) {
           if (cancelRequested) throw new Error(CANCEL_MESSAGE);
-          await new Promise(r => setTimeout(r, 5));
+          await new Promise(r => setTimeout(r, 2));
         }
         // エンコーダのキューもチェック
-        while (encoder.encodeQueueSize > 15) {
-          await new Promise(r => setTimeout(r, 5));
+        while (encoder.encodeQueueSize > 30) {
+          await new Promise(r => setTimeout(r, 2));
         }
 
         decodedFrameIndices.push(i);
@@ -608,6 +626,22 @@ async function compressWithMediaRecorder(file, videoInfo, targetWidth, targetHei
 }
 
 // ============ ヘルパー ============
+
+// WebCodecsで使うmp4box.js / mp4-muxerを先読みする。
+// 動画メタデータ解析(getVideoInfo)と並行実行することで待ち時間を隠す。
+// 再圧縮の再試行時もキャッシュされたPromiseを返すだけなので追加コストなし。
+let _webCodecsLibsPromise = null;
+function preloadWebCodecsLibs() {
+  if (_webCodecsLibsPromise) return _webCodecsLibsPromise;
+  _webCodecsLibsPromise = (async () => {
+    const [mp4boxModule] = await Promise.all([
+      import('./vendor/mp4box.all.mjs'),
+      loadScript('./vendor/mp4-muxer.js'),
+    ]);
+    window.MP4Box = mp4boxModule;
+  })();
+  return _webCodecsLibsPromise;
+}
 
 function loadScript(src) {
   return new Promise((resolve, reject) => {
