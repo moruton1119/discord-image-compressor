@@ -443,15 +443,27 @@ export function getTkhdRotationDegrees(mp4box, trackId) {
   if (!matrix || matrix.length !== 9) return null;
 
   // tkhd stores [a, b, u, c, d, v, x, y, w]. Only a proper 2D rotation
-  // with homogeneous row [0, 0, w] is safe to bake into the Canvas output.
+  // with a full homogeneous row [u, v, w] = [0, 0, w>0] is safe to bake
+  // into the Canvas output. A non-zero (or non-finite) u/v means the
+  // matrix encodes an affine projection this app does not support, so it
+  // must fall back to the display-size heuristics instead of being
+  // accepted as a 0-degree rotation.
+  //
+  // x/y translation policy: this function intentionally keeps rejecting
+  // non-zero x/y translations. tkhd in real camera/screen-recording files
+  // carries a pure rotation (x=y=0); a translated matrix would shift the
+  // picture outside the canvas frame, so such files are treated as
+  // unsupported and routed to the fallback path as well.
   const a = matrix[0] / 65536;
   const b = matrix[1] / 65536;
+  const u = matrix[2];
   const c = matrix[3] / 65536;
   const d = matrix[4] / 65536;
+  const v = matrix[5];
   const x = matrix[6];
   const y = matrix[7];
   const w = matrix[8];
-  if (![a, b, c, d, x, y, w].every(Number.isFinite) || x !== 0 || y !== 0 || w <= 0) {
+  if (![a, b, u, c, d, v, x, y, w].every(Number.isFinite) || u !== 0 || v !== 0 || x !== 0 || y !== 0 || w <= 0) {
     return null;
   }
 
