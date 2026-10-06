@@ -140,7 +140,7 @@ async function compressWithWebCodecs(file, videoInfo, targetWidth, targetHeight,
   // Phase 2: MP4デマックス (5〜15%)
   onStatus?.('動画を解析中...');
   onProgress?.(8);
-  const { chunks, audioChunks, decoderConfig, audioDecoderConfig, videoTrack } = await demuxMP4(file);
+  const { chunks, audioChunks, decoderConfig, audioDecoderConfig, videoTrack, rotationDegrees } = await demuxMP4(file);
   addDebugLog('INFO', `MP4解析完了: 映像${chunks.length}チャンク${audioChunks.length > 0 ? ` + 音声${audioChunks.length}チャンク` : '（音声なし）'}`);
   onProgress?.(15);
 
@@ -257,7 +257,7 @@ async function compressWithWebCodecs(file, videoInfo, targetWidth, targetHeight,
     let decodedFrameIndices = [];
     let encoderFinished = false;
     let rotationChecked = false;
-    let isRotated = false;
+    let appliedRotationDegrees = 0;
 
     // エンコーダ
     encoder = new VideoEncoder({
@@ -287,32 +287,38 @@ async function compressWithWebCodecs(file, videoInfo, targetWidth, targetHeight,
         const idx = decodedFrameIndices.shift();
 
         // ===== 回転メタデータ検出（スマホ縦動画対応）=====
-        // <video>要素のサイズ（回転適用後）とデコードフレームの実サイズ（回転前）が
-        // 縦横入れ替わっていたら、rotation 90°付きの動画
+        // tkhd行列が読めた場合はその符号付き角度を使う。読めない場合だけ、
+        // 既存の表示サイズとフレームサイズの入れ替わり検出を +90° 仮定として残す。
         if (!rotationChecked) {
           rotationChecked = true;
-          if (frame.displayWidth === videoInfo.height &&
-              frame.displayHeight === videoInfo.width &&
-              frame.displayWidth !== frame.displayHeight) {
-            isRotated = true;
-            addDebugLog('INFO', `回転メタデータ検出: フレーム実サイズ ${frame.displayWidth}x${frame.displayHeight}（回転前）→ 90°回転して描画`);
+          if (rotationDegrees !== null) {
+            appliedRotationDegrees = rotationDegrees;
+            addDebugLog('INFO', `tkhd回転メタデータ検出: ${appliedRotationDegrees}°`);
+          } else if (frame.displayWidth === videoInfo.height &&
+                     frame.displayHeight === videoInfo.width &&
+                     frame.displayWidth !== frame.displayHeight) {
+            appliedRotationDegrees = 90;
+            addDebugLog('WARN', `tkhd回転行列を読めないため、フレーム実サイズ ${frame.displayWidth}x${frame.displayHeight} から +90° を仮定して描画`);
           }
         }
 
         // リサイズまたは回転が必要ならCanvas経由
-        const needsCanvas = (targetWidth !== videoInfo.width || targetHeight !== videoInfo.height) || isRotated;
+        const needsCanvas = (targetWidth !== videoInfo.width || targetHeight !== videoInfo.height) || appliedRotationDegrees !== 0;
         if (needsCanvas) {
           const ts = frame.timestamp;
           const dur = frame.duration;
-          if (isRotated) {
-            // 90°回転して描画（rotationメタデータをピクセルに焼き込む）
+          if (appliedRotationDegrees !== 0) {
+            // tkhdの回転をピクセルに焼き込む。90°/270°では描画後の幅・高さが入れ替わる。
             const rawW = frame.displayWidth;
             const rawH = frame.displayHeight;
-            const s = targetWidth / rawH;
+            const quarterTurn = Math.abs(appliedRotationDegrees) === 90;
+            const rotatedW = quarterTurn ? rawH : rawW;
+            const rotatedH = quarterTurn ? rawW : rawH;
+            const scale = Math.min(targetWidth / rotatedW, targetHeight / rotatedH);
             ctx.save();
             ctx.translate(targetWidth / 2, targetHeight / 2);
-            ctx.rotate(Math.PI / 2);
-            ctx.drawImage(frame, -rawW * s / 2, -rawH * s / 2, rawW * s, rawH * s);
+            ctx.rotate(appliedRotationDegrees * Math.PI / 180);
+            ctx.drawImage(frame, -rawW * scale / 2, -rawH * scale / 2, rawW * scale, rawH * scale);
             ctx.restore();
           } else {
             ctx.drawImage(frame, 0, 0, targetWidth, targetHeight);
@@ -429,6 +435,24 @@ async function compressWithWebCodecs(file, videoInfo, targetWidth, targetHeight,
 
 // ============ MP4 デマックス（mp4box.js） ============
 
+// MP4Boxのtkhd.matrixは9要素のsigned 16.16 fixed-point行列として解析される。
+// [a, b, u, c, d, v, x, y, w] の a=cosθ, b=sinθ を使い、
+// このアプリが扱う直交回転だけを0/+90/-90/180°へ正規化する。
+export function getTkhdRotationDegrees(mp4box, trackId) {
+  const matrix = mp4box.getTrackById(trackId)?.tkhd?.matrix;
+  if (!matrix || matrix.length !== 9) return null;
+
+  const a = matrix[0] / 65536;
+  const b = matrix[1] / 65536;
+  if (!Number.isFinite(a) || !Number.isFinite(b)) return null;
+
+  const angle = Math.atan2(b, a) * 180 / Math.PI;
+  let normalized = ((Math.round(angle / 90) * 90) % 360 + 360) % 360;
+  if (normalized === 270) normalized = -90;
+  const angularError = Math.abs((((angle - normalized) + 180) % 360) - 180);
+  return angularError <= 1 ? normalized : null;
+}
+
 async function demuxMP4(file) {
   return new Promise((resolve, reject) => {
     const mp4box = window.MP4Box.createFile();
@@ -441,6 +465,7 @@ async function demuxMP4(file) {
     let lastSampleStartTime = 0;
     let videoDone = false;
     let audioDone = true;
+    let rotationDegrees = null;
 
     mp4box.onError = (e) => reject(new Error(`mp4box error: ${e}`));
 
@@ -451,6 +476,7 @@ async function demuxMP4(file) {
       }
 
       videoTrack = info.videoTracks[0];
+      rotationDegrees = getTkhdRotationDegrees(mp4box, videoTrack.id);
       addDebugLog('INFO', `映像: ${videoTrack.video.width}x${videoTrack.video.height}, codec=${videoTrack.codec}`);
 
       // ===== 音声トラック検出（AACのみ対応）=====
@@ -560,7 +586,7 @@ async function demuxMP4(file) {
           }
         }
         mp4box.stop();
-        resolve({ chunks, audioChunks, decoderConfig, audioDecoderConfig, videoTrack, audioTrack });
+        resolve({ chunks, audioChunks, decoderConfig, audioDecoderConfig, videoTrack, audioTrack, rotationDegrees });
       }
     }
 
