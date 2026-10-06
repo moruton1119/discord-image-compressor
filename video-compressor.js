@@ -442,15 +442,39 @@ export function getTkhdRotationDegrees(mp4box, trackId) {
   const matrix = mp4box.getTrackById(trackId)?.tkhd?.matrix;
   if (!matrix || matrix.length !== 9) return null;
 
+  // tkhd stores [a, b, u, c, d, v, x, y, w]. Only a proper 2D rotation
+  // with homogeneous row [0, 0, w] is safe to bake into the Canvas output.
   const a = matrix[0] / 65536;
   const b = matrix[1] / 65536;
-  if (!Number.isFinite(a) || !Number.isFinite(b)) return null;
+  const c = matrix[3] / 65536;
+  const d = matrix[4] / 65536;
+  const x = matrix[6];
+  const y = matrix[7];
+  const w = matrix[8];
+  if (![a, b, c, d, x, y, w].every(Number.isFinite) || x !== 0 || y !== 0 || w <= 0) {
+    return null;
+  }
+
+  const firstColumnLength = Math.hypot(a, b);
+  const secondColumnLength = Math.hypot(c, d);
+  const columnDotProduct = a * c + b * d;
+  const determinant = a * d - b * c;
+  const tolerance = 0.01;
+  if (
+    Math.abs(firstColumnLength - 1) > tolerance ||
+    Math.abs(secondColumnLength - 1) > tolerance ||
+    Math.abs(columnDotProduct) > tolerance ||
+    determinant <= 0
+  ) {
+    return null;
+  }
 
   const angle = Math.atan2(b, a) * 180 / Math.PI;
-  let normalized = ((Math.round(angle / 90) * 90) % 360 + 360) % 360;
+  const positiveModulo = (value, modulus) => ((value % modulus) + modulus) % modulus;
+  let normalized = positiveModulo(Math.round(angle / 90) * 90, 360);
   if (normalized === 270) normalized = -90;
-  const angularError = Math.abs((((angle - normalized) + 180) % 360) - 180);
-  return angularError <= 1 ? normalized : null;
+  const angularDifference = positiveModulo(angle - normalized + 180, 360) - 180;
+  return Math.abs(angularDifference) <= 1 ? normalized : null;
 }
 
 async function demuxMP4(file) {
