@@ -518,7 +518,7 @@ async function demuxMP4(file) {
       // ===== 音声トラック検出（AACのみ対応）=====
       if (info.audioTracks && info.audioTracks.length > 0) {
         const at = info.audioTracks[0];
-        if (at.codec && at.codec.startsWith('mp4a')) {
+        if (at.codec === 'mp4a.40.2') {
           audioTrack = at;
           audioDone = false;
           addDebugLog('INFO', `元動画の音声: AAC ${at.audio.channel_count}ch ${at.audio.sample_rate}Hz → そのまま出力にコピー`);
@@ -606,10 +606,16 @@ async function demuxMP4(file) {
               // mp4-muxerはAudioSpecificConfigのみ期待するため、esds中身から抽出する
               const asc = extractAudioSpecificConfig(audioDesc);
               if (asc) {
+                const parsedAsc = parseAudioSpecificConfig(asc);
+                const sampleRate = parsedAsc?.sampleRate || audioTrack.audio.sample_rate;
+                const numberOfChannels = parsedAsc?.numberOfChannels || audioTrack.audio.channel_count;
+                if (parsedAsc && (parsedAsc.sampleRate !== audioTrack.audio.sample_rate || parsedAsc.numberOfChannels !== audioTrack.audio.channel_count)) {
+                  addDebugLog('WARN', `コンテナの音声情報が不正(${audioTrack.audio.sample_rate}Hz ${audioTrack.audio.channel_count}ch)のため、AudioSpecificConfigの実値(${sampleRate}Hz ${numberOfChannels}ch)を使用`);
+                }
                 audioDecoderConfig = {
                   codec: 'mp4a.40.2',
-                  sampleRate: audioTrack.audio.sample_rate,
-                  numberOfChannels: audioTrack.audio.channel_count,
+                  sampleRate,
+                  numberOfChannels,
                   description: asc,
                 };
               } else {
@@ -670,6 +676,50 @@ function extractAudioSpecificConfig(esdsContent) {
   return null;
 }
 
+const AAC_SAMPLE_RATES = [96000, 88200, 64000, 48000, 44100, 32000, 24000, 22050, 16000, 12000, 11025, 8000, 7350];
+function parseAudioSpecificConfig(asc) {
+  if (!asc || asc.length < 2) return null;
+  let bitPos = 0;
+  let truncated = false;
+  const readBits = (n) => {
+    let val = 0;
+    for (let i = 0; i < n; i++) {
+      const byteIdx = bitPos >> 3;
+      if (byteIdx >= asc.length) {
+        truncated = true;
+        return 0;
+      }
+      const bit = (asc[byteIdx] >> (7 - (bitPos & 7))) & 1;
+      val = (val << 1) | bit;
+      bitPos++;
+    }
+    return val;
+  };
+
+  let objectType = readBits(5);
+  if (objectType === 31) {
+    objectType = 32 + readBits(6);
+  }
+  if (truncated) return null;
+
+  let freqIndex = readBits(4);
+  let sampleRate = freqIndex === 0x0f ? readBits(24) : AAC_SAMPLE_RATES[freqIndex];
+  if (truncated || !sampleRate) return null;
+
+  const channelConfig = readBits(4);
+  if (truncated) return null;
+  if (channelConfig === 0) {
+    return null;
+  }
+
+  const CHANNEL_CONFIG_TO_COUNT = [0, 1, 2, 3, 4, 5, 6, 8];
+  const numberOfChannels = CHANNEL_CONFIG_TO_COUNT[channelConfig];
+  if (!numberOfChannels) return null; // 8~15は未定義のため非対応
+
+  return { sampleRate, numberOfChannels, objectType };
+
+}
+
 // decoder description — W3C公式サンプルと同じ方法
 // file.getTrackById() で内部trackオブジェクトを取得し、
 // avcC/hvcC/vpcC/av1C ボックスをシリアライズして先頭8バイトを削る
@@ -681,7 +731,8 @@ function getDecoderDescription(file, track) {
   }
   for (const entry of trak.mdia.minf.stbl.stsd.entries) {
     // 映像: avcC/hvcC/vpcC/av1C、音声: esds（AAC AudioSpecificConfig）
-    const box = entry.avcC || entry.hvcC || entry.vpcC || entry.av1C || entry.esds;
+    const box = entry.avcC || entry.hvcC || entry.vpcC || entry.av1C || entry.esds
+      || (entry.wave && entry.wave.esds);
     if (box) {
       const stream = new window.MP4Box.DataStream(undefined, 0, window.MP4Box.DataStream.BIG_ENDIAN);
       box.write(stream);
