@@ -757,6 +757,17 @@
   <section class="changelog">
     <h2>📜 更新履歴</h2>
     <div class="changelog-list">
+
+      <div class="changelog-item">
+        <div class="changelog-date">2026/10/7</div>
+        <div class="changelog-body">
+          <div class="changelog-title">iPhone画面収録動画が上下反転する不具合を修正</div>
+          <ul>
+            <li>動画の回転メタデータ（tkhd回転行列）から回転方向（0°/90°/180°/270°）を正しく判定するように修正。従来は90°固定で回していたため、横画面の画面収録が上下逆さまになることがありました</li>
+            <li>回転情報が読めない・不正な動画は従来どおり自動フォールバックで安全に処理</li>
+          </ul>
+        </div>
+      </div>
       <div class="changelog-item">
         <div class="changelog-date">2026/8/17</div>
         <div class="changelog-body">
